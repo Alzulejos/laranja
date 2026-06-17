@@ -34,6 +34,62 @@ export interface Spinner {
   stop(): void;
 }
 
+export interface Choice<T> {
+  label: string;
+  value: T;
+}
+
+/**
+ * A zero-dependency arrow-key picker. Returns the chosen value, or undefined if
+ * the user cancels (q / Esc / Ctrl-C). Requires a TTY — callers must handle the
+ * non-TTY case themselves (there's no interactive input to read).
+ */
+export function select<T>(title: string, choices: Choice<T>[]): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const { stdin, stdout } = process;
+    let i = 0;
+
+    const render = (first: boolean) => {
+      if (!first) stdout.write(`\x1b[${choices.length + 1}A`); // move cursor back up over the list
+      stdout.write(`\x1b[J  ${dim(title)}\n`);
+      choices.forEach((c, n) => {
+        const cursor = n === i ? orange("❯") : " ";
+        const label = n === i ? bold(c.label) : c.label;
+        stdout.write(`  ${cursor} ${label}\n`);
+      });
+    };
+
+    const cleanup = () => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener("data", onData);
+    };
+
+    const onData = (buf: Buffer) => {
+      const key = buf.toString();
+      if (key === "\x1b[A" || key === "k") i = (i - 1 + choices.length) % choices.length;
+      else if (key === "\x1b[B" || key === "j") i = (i + 1) % choices.length;
+      else if (key === "\r" || key === "\n") {
+        cleanup();
+        render(false); // leave the final selection on screen
+        resolve(choices[i].value);
+        return;
+      } else if (key === "\x03" || key === "\x1b" || key === "q") {
+        cleanup();
+        render(false);
+        resolve(undefined);
+        return;
+      }
+      render(false);
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+    render(true);
+  });
+}
+
 /** A braille spinner that degrades to plain lines on non-TTY output. */
 export function spinner(initial: string): Spinner {
   let text = initial;

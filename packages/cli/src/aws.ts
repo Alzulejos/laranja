@@ -1,5 +1,6 @@
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
+import { CloudFormationClient, ListStackResourcesCommand } from "@aws-sdk/client-cloudformation";
 
 /** Resolve the AWS account id from the active credentials. */
 export async function getAccountId(region: string): Promise<string> {
@@ -18,6 +19,64 @@ export async function getAccountId(region: string): Promise<string> {
     throw new Error("Could not determine the AWS account from your credentials.");
   }
   return res.Account;
+}
+
+/** Kind of laranja-generated Lambda, inferred from its CDK logical id. */
+export type LambdaKind = "http" | "cron" | "queue" | "lambda";
+
+/** A deployed Lambda discovered from the live CloudFormation stack. */
+export interface DeployedLambda {
+  kind: LambdaKind;
+  /** CloudFormation logical id, e.g. "HttpFn" / "CronnightlyReportFn". */
+  logicalId: string;
+  /** Physical function name (== CloudWatch log group suffix). */
+  functionName: string;
+  /** CloudWatch log group, e.g. "/aws/lambda/myapp-app-dev". */
+  logGroupName: string;
+}
+
+/** Infer the kind of laranja Lambda from its CDK logical id prefix. */
+export function lambdaKind(logicalId: string): LambdaKind {
+  if (logicalId.startsWith("HttpFn")) return "http";
+  if (logicalId.startsWith("Cron")) return "cron";
+  if (logicalId.startsWith("Consumer")) return "queue";
+  return "lambda";
+}
+
+/**
+ * List the Lambda functions in a deployed laranja stack by querying the live
+ * CloudFormation stack (the durable source of truth — no local state needed).
+ * Throws a friendly error if the stack doesn't exist (i.e. nothing deployed).
+ */
+export async function listStackLambdas(region: string, stackName: string): Promise<DeployedLambda[]> {
+  const cfn = new CloudFormationClient({ region });
+  const out: DeployedLambda[] = [];
+  let nextToken: string | undefined;
+  try {
+    do {
+      const res = await cfn.send(new ListStackResourcesCommand({ StackName: stackName, NextToken: nextToken }));
+      for (const r of res.StackResourceSummaries ?? []) {
+        if (r.ResourceType !== "AWS::Lambda::Function" || !r.PhysicalResourceId) continue;
+        out.push({
+          kind: lambdaKind(r.LogicalResourceId ?? ""),
+          logicalId: r.LogicalResourceId ?? "",
+          functionName: r.PhysicalResourceId,
+          logGroupName: `/aws/lambda/${r.PhysicalResourceId}`,
+        });
+      }
+      nextToken = res.NextToken;
+    } while (nextToken);
+  } catch (err) {
+    const name = err instanceof Error ? err.name : "";
+    if (name === "ValidationError") {
+      // CloudFormation returns ValidationError for a non-existent stack.
+      throw new Error(`No deployed stack "${stackName}" in ${region}. Run \`laranja deploy\` first.`);
+    }
+    throw err;
+  }
+  // Stable, readable order: http first, then crons, then queues.
+  const rank: Record<LambdaKind, number> = { http: 0, cron: 1, queue: 2, lambda: 3 };
+  return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.functionName.localeCompare(b.functionName));
 }
 
 /**

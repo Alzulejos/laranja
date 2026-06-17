@@ -16,6 +16,7 @@
     "destroy:express": "tsx packages/cli/src/cli.ts destroy examples/express-basic",
     "deploy:cf": "tsx packages/cli/src/cli.ts deploy examples/express-codefirst",
     "destroy:cf": "tsx packages/cli/src/cli.ts destroy examples/express-codefirst",
+    "log:cf": "tsx packages/cli/src/cli.ts logs examples/express-codefirst",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest"

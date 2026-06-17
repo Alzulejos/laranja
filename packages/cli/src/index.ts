@@ -6,3 +6,4 @@ export { deploy } from "./commands/deploy.js";
 export { diff } from "./commands/diff.js";
 export { destroy } from "./commands/destroy.js";
 export { eject } from "./commands/eject.js";
+export { logs } from "./commands/logs.js";

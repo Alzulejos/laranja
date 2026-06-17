@@ -164,10 +164,14 @@ laranja synth      # build & print the planned resources (no AWS calls)
 laranja deploy     # deploy into your AWS account
 laranja diff       # diff the plan against what's deployed
 laranja destroy    # tear it all down
+laranja logs       # tail CloudWatch logs for a deployed function
 laranja eject      # generate an owned CDK project (Pro)
 
 # flags
   --verbose, -v    # stream full CDK/CloudFormation output
+  --all            # logs: tail every function (multiplexed)
+  --no-follow      # logs: print recent history and exit
+  --since <dur>    # logs: history look-back, e.g. 30s, 15m, 1h, 2d
 ```
 
 Each command takes an optional `[project-dir]` (defaults to the current directory).
@@ -215,8 +219,8 @@ cd infra && npm install && npm run deploy
 
 ## Roadmap
 
+- [x] `laranja logs` — tail CloudWatch with the same clean UI
 - [ ] NestJS support (native `@Controller`/`@Get` discovery + DI)
-- [ ] `laranja logs` — tail CloudWatch with the same clean UI
 - [ ] Automated custom domains (CloudFront + ACM + Route 53)
 - [ ] Hosted dashboard (read-only, via a role you grant)
 - [ ] Secrets & resource decorators (`@Secret`, `@Table`)

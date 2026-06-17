@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 import path from "node:path";
+import { existsSync, statSync } from "node:fs";
 import { init } from "./commands/init.js";
 import { synthCommand } from "./commands/synth.js";
 import { deploy } from "./commands/deploy.js";
 import { diff } from "./commands/diff.js";
 import { destroy } from "./commands/destroy.js";
 import { eject } from "./commands/eject.js";
+import { logs } from "./commands/logs.js";
 import * as ui from "./ui.js";
 
 const HELP = `laranja — code-first deploy for Node apps
@@ -19,10 +21,14 @@ Commands:
   deploy     Deploy into your AWS account (uses local credentials)
   diff       Diff the plan against what's deployed
   destroy    Tear down the deployed stack
+  logs       Tail CloudWatch logs for a deployed function
   eject      Generate an owned, editable CDK project (paid)
 
 Flags:
   --verbose, -v   Show full CDK/CloudFormation output (deploy/destroy)
+  --all           logs: tail every function (multiplexed)
+  --no-follow     logs: print recent history and exit (no live tail)
+  --since <dur>   logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
 
 project-dir defaults to the current directory.
 `;
@@ -48,6 +54,26 @@ async function main(): Promise<void> {
     case "destroy":
       await destroy(projectDir, { verbose });
       break;
+    case "logs": {
+      // Positionals: an existing directory is the project dir; anything else is
+      // the function name. So `logs api`, `logs ./app`, and `logs ./app api` all work.
+      const positionals = rest.filter((a) => !a.startsWith("-"));
+      let dir = ".";
+      let name: string | undefined;
+      for (const p of positionals) {
+        if (existsSync(p) && statSync(p).isDirectory()) dir = p;
+        else name = p;
+      }
+      const sinceIdx = rest.findIndex((a) => a === "--since");
+      const since = sinceIdx >= 0 ? rest[sinceIdx + 1] : undefined;
+      await logs(path.resolve(dir), {
+        name,
+        all: rest.includes("--all"),
+        follow: !rest.includes("--no-follow"),
+        since,
+      });
+      break;
+    }
     case "eject":
       await eject(projectDir, { force: rest.includes("--force") });
       break;

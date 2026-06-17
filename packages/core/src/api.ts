@@ -99,6 +99,26 @@ export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
 
 export type DeploymentStatus = "succeeded" | "failed" | "destroyed";
 
+/** Kind of a deployed resource, for dashboard grouping/icons. */
+export type DeployedResourceKind = "http" | "cron" | "queue" | "lambda";
+
+/**
+ * A single deployed AWS resource, reported so the dashboard can show an
+ * inventory + deep-link to the console (e.g. CloudWatch logs).
+ *
+ * SECURITY: identifiers ONLY — never env-var values or secrets. ARNs are not
+ * credentials, but treat this as tenant-scoped data (per-user authz on read).
+ */
+export interface DeployedResource {
+  kind: DeployedResourceKind;
+  /** Physical resource name (Lambda function name, queue name, …). */
+  name: string;
+  /** Full ARN, for console deep-links. Reconstructable from account+region+name. */
+  arn?: string;
+  /** CloudWatch log group, for Lambda-backed resources. */
+  logGroup?: string;
+}
+
 /** `POST /v1/deployments` body — the outcome of applying/destroying a synth. */
 export interface DeploymentReport {
   /** From the `SynthResponse`. */
@@ -109,6 +129,8 @@ export interface DeploymentReport {
   region?: string;
   /** CloudFormation outputs (HttpUrl, queue URLs, …) — shown as links. */
   outputs?: Record<string, string>;
+  /** Inventory of deployed resources (names/ARNs only — no secret values). */
+  resources?: DeployedResource[];
   /** Populated when `status` is "failed". */
   error?: string;
 }

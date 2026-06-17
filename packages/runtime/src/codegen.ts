@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { InfraIR } from "@laranja/core";
+import type { HandlerRef, InfraIR } from "@laranja/core";
 
 /**
  * A generated Lambda entry file. These tiny shims are what the bundler points at:
@@ -38,6 +38,23 @@ function safe(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
+/**
+ * The import line + runtime-factory arguments for a handler, branching on whether
+ * it's a class method (`Ctor, "method"`) or a standalone function (`fn`).
+ */
+function handlerWiring(ref: HandlerRef, spec: string): { importLine: string; factoryArgs: string } {
+  if (ref.style === "function") {
+    return {
+      importLine: `import { ${ref.exportName} } from "${spec}";`,
+      factoryArgs: ref.exportName,
+    };
+  }
+  return {
+    importLine: `import { ${ref.className} } from "${spec}";`,
+    factoryArgs: `${ref.className}, "${ref.method}"`,
+  };
+}
+
 /** Generate all Lambda entry shims for an Infra IR. */
 export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): GeneratedEntry[] {
   const entries: GeneratedEntry[] = [];
@@ -65,34 +82,36 @@ export const handler = createHttpHandler(app);
     });
   }
 
-  // Cron: one Lambda per @Cron method.
+  // Cron: one Lambda per @Cron method / cron() function.
   for (const cron of ir.crons) {
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
+    const { importLine, factoryArgs } = handlerWiring(cron, spec);
     entries.push({
       id: cron.id,
       kind: "cron",
       fileName: `cron-${safe(cron.id)}.ts`,
       handlerExport: "handler",
-      contents: `import { ${cron.className} } from "${spec}";
+      contents: `${importLine}
 import { createScheduledHandler } from "@laranja/runtime";
 
-export const handler = createScheduledHandler(${cron.className}, "${cron.method}");
+export const handler = createScheduledHandler(${factoryArgs});
 `,
     });
   }
 
-  // Queue: one consumer Lambda per @Queue method.
+  // Queue: one consumer Lambda per @Queue method / queue() function.
   for (const queue of ir.queues) {
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
+    const { importLine, factoryArgs } = handlerWiring(queue, spec);
     entries.push({
       id: queue.id,
       kind: "queue",
       fileName: `queue-${safe(queue.id)}.ts`,
       handlerExport: "handler",
-      contents: `import { ${queue.className} } from "${spec}";
+      contents: `${importLine}
 import { createQueueHandler } from "@laranja/runtime";
 
-export const handler = createQueueHandler(${queue.className}, "${queue.method}");
+export const handler = createQueueHandler(${factoryArgs});
 `,
     });
   }

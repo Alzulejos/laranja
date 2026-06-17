@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { Toolkit, StackSelectionStrategy, BootstrapEnvironments } from "@aws-cdk/toolkit-lib";
-import { loadConfig } from "@laranja/core";
+import { handlerLabel, loadConfig } from "@laranja/core";
 import { buildAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
@@ -62,8 +62,7 @@ export async function deploy(projectDir: string, opts: { verbose?: boolean } = {
     console.log();
     if (out.HttpUrl) ui.step("🌐", "http", out.HttpUrl);
     if (ir.crons.length) {
-      const names = ir.crons.map((c) => (c.id === `${c.className}-${c.method}` ? c.method : c.id));
-      ui.step("⏰", "cron", names.join(", "));
+      ui.step("⏰", "cron", ir.crons.map((c) => handlerLabel(c)).join(", "));
     }
     if (ir.queues.length) ui.step("📨", "queue", ir.queues.map((q) => q.name).join(", "));
   }

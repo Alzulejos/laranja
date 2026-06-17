@@ -12,8 +12,9 @@ export type Framework = "express" | "nest";
 /** A point in the user's source, for diagnostics / visibility. e.g. "src/jobs.ts:12" */
 export type SourceLocation = string;
 
-/** Reference to a decorated method that becomes an isolated Lambda. */
-export interface HandlerRef {
+/** A decorated method on a class: `class Jobs { @Cron() method() {} }`. */
+export interface MethodTarget {
+  style: "method";
   /** Project-relative path to the file declaring the class. */
   file: string;
   /** Class the method lives on. */
@@ -22,6 +23,38 @@ export interface HandlerRef {
   method: string;
   /** Source location for diagnostics. */
   source: SourceLocation;
+}
+
+/** An exported function registered via `cron(...)` / `queue(...)`. */
+export interface FunctionTarget {
+  style: "function";
+  /** Project-relative path to the file declaring the function. */
+  file: string;
+  /** Exported name of the handler function to import. */
+  exportName: string;
+  /** Source location for diagnostics. */
+  source: SourceLocation;
+}
+
+/**
+ * Reference to the user code that becomes an isolated Lambda. Either a method on
+ * a class (decorator style) or a standalone exported function (marker style).
+ */
+export type HandlerRef = MethodTarget | FunctionTarget;
+
+/** The natural handler name: method name (class style) or export name (function style). */
+export function handlerName(ref: HandlerRef): string {
+  return ref.style === "function" ? ref.exportName : ref.method;
+}
+
+/** The id a handler gets when the user doesn't set an explicit one. */
+export function defaultHandlerId(ref: HandlerRef): string {
+  return ref.style === "function" ? ref.exportName : `${ref.className}-${ref.method}`;
+}
+
+/** Lambda label: the natural handler name, unless the user set a custom id. */
+export function handlerLabel(item: HandlerRef & { id: string }): string {
+  return item.id === defaultHandlerId(item) ? handlerName(item) : item.id;
 }
 
 /** A discovered HTTP route. In v1 all routes are served by ONE proxy Lambda; */
@@ -40,22 +73,22 @@ export interface HttpIR {
   routes: HttpRoute[];
 }
 
-/** @Cron('rate(...)') -> EventBridge schedule rule -> its own Lambda. */
-export interface CronIR extends HandlerRef {
+/** @Cron('rate(...)') / cron(...) -> EventBridge schedule rule -> its own Lambda. */
+export type CronIR = HandlerRef & {
   /** Stable logical id, used for the CDK construct + function name. */
   id: string;
   /** EventBridge schedule expression, e.g. "rate(5 minutes)" or "cron(0 12 * * ? *)". */
   schedule: string;
-}
+};
 
-/** @Queue({ name }) -> SQS queue -> its own consumer Lambda. */
-export interface QueueIR extends HandlerRef {
+/** @Queue({ name }) / queue(...) -> SQS queue -> its own consumer Lambda. */
+export type QueueIR = HandlerRef & {
   id: string;
   /** Queue name. A ".fifo" suffix or fifo:true marks a FIFO queue. */
   name: string;
   batchSize?: number;
   fifo?: boolean;
-}
+};
 
 export interface InfraIR {
   app: {

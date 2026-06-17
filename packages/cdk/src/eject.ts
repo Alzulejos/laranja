@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { InfraIR } from "@laranja/core";
+import { handlerLabel, handlerName, type InfraIR } from "@laranja/core";
 import { generateEntries } from "@laranja/runtime";
 
 /** A file to write, with its path relative to the eject dir. */
@@ -110,7 +110,7 @@ export function generateEjectProject(ir: InfraIR, opts: EjectOptions): EjectedFi
   if (ir.crons.length > 0) lines.push(`    // --- Cron: Lambda + EventBridge rule each ---`);
   ir.crons.forEach((cron, i) => {
     const v = `cron${i}`;
-    const label = cron.id === `${cron.className}-${cron.method}` ? cron.method : cron.id;
+    const label = handlerLabel(cron);
     lines.push(`    const ${v} = lambda("Cron${cid(cron.id)}Fn", ${JSON.stringify(label)}, ${JSON.stringify(entryFileById.get(cron.id))}, 60);`);
     lines.push(`    new Rule(this, "Cron${cid(cron.id)}Rule", {`);
     lines.push(`      schedule: Schedule.expression(${JSON.stringify(cron.schedule)}),`);
@@ -133,7 +133,7 @@ export function generateEjectProject(ir: InfraIR, opts: EjectOptions): EjectedFi
     lines.push(`      encryption: QueueEncryption.SQS_MANAGED,`);
     lines.push(`      visibilityTimeout: Duration.seconds(180),`);
     lines.push(`    });`);
-    lines.push(`    const ${cv} = lambda("Consumer${cid(q.id)}Fn", ${JSON.stringify(q.method)}, ${JSON.stringify(entryFileById.get(q.id))}, 30);`);
+    lines.push(`    const ${cv} = lambda("Consumer${cid(q.id)}Fn", ${JSON.stringify(handlerName(q))}, ${JSON.stringify(entryFileById.get(q.id))}, 30);`);
     lines.push(`    ${cv}.addEventSource(new SqsEventSource(${qv}, { batchSize: ${q.batchSize ?? 10}, reportBatchItemFailures: true }));`);
     lines.push(`    new CfnOutput(this, "Queue${cid(q.id)}Url", { value: ${qv}.queueUrl });`);
   });

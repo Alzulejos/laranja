@@ -47,9 +47,9 @@ export async function loadConfig(
     throw new Error(`${CONFIG_FILENAME} must \`export default\` a config object.`);
   }
   if (!cfg.name) throw new Error(`${CONFIG_FILENAME}: "name" is required.`);
-  if (cfg.http !== false && !cfg.entry) {
-    throw new Error(`${CONFIG_FILENAME}: "entry" is required (or set "http: false" for a workers-only deployment).`);
-  }
+  // `entry` is intentionally NOT required here: the HTTP app may instead be
+  // declared in code via an `http(app)` marker, which the scanner resolves. The
+  // scanner raises a clear error if there's ultimately nothing to deploy.
   return {
     appExport: "app",
     stage: "dev",

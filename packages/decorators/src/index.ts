@@ -45,6 +45,14 @@ function register(kind: HandlerKind, target: object, method: string | symbol, op
   });
 }
 
+/** The shape of a standalone handler passed to `cron()` / `queue()`. */
+export type JobHandler = (...args: any[]) => unknown | Promise<unknown>;
+
+function registerFunction(kind: HandlerKind, handler: JobHandler, options: CronOptions | QueueOptions): void {
+  const name = handler.name || "(anonymous)";
+  handlerRegistry.push({ kind, className: name, method: name, options });
+}
+
 /**
  * Schedules a method on an EventBridge rule. Each `@Cron` becomes its own Lambda.
  *
@@ -75,4 +83,48 @@ export function Queue(options: QueueOptions): MethodDecorator {
   return (target, propertyKey) => {
     register("queue", target, propertyKey, options);
   };
+}
+
+/**
+ * Function-style counterpart to `@Cron` — for codebases that don't use classes.
+ * Register a standalone exported function on a schedule. The function's name
+ * becomes the resource id (unless you pass an explicit `id`). Like the
+ * decorators, this is a near-no-op at runtime: the scanner reads it statically.
+ *
+ * @example
+ *   export async function refreshCache() {}
+ *   cron(rate(5, "minutes"), refreshCache);
+ */
+export function cron(schedule: string, handler: JobHandler): void;
+export function cron(options: CronOptions, handler: JobHandler): void;
+export function cron(arg: string | CronOptions, handler: JobHandler): void {
+  const options: CronOptions = typeof arg === "string" ? { schedule: arg } : arg;
+  registerFunction("cron", handler, options);
+}
+
+/**
+ * Function-style counterpart to `@Queue`. Register a standalone exported function
+ * as an SQS consumer.
+ *
+ * @example
+ *   export async function sendEmails(body: unknown) {}
+ *   queue({ name: "emails", batchSize: 10 }, sendEmails);
+ */
+export function queue(options: QueueOptions, handler: JobHandler): void {
+  registerFunction("queue", handler, options);
+}
+
+/**
+ * Marks the HTTP app (the proxy target) for laranja, code-first — instead of
+ * pointing `entry`/`appExport` at it in config. Export the result so the scanner
+ * (and the generated shim) can find it:
+ *
+ *   export default http(app);          // or
+ *   export const api = http(app);
+ *
+ * Identity at runtime: it returns the app untouched. The scanner reads it
+ * statically; omit it (and `entry`) for a workers-only deployment.
+ */
+export function http<T>(app: T): T {
+  return app;
 }

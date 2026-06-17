@@ -11,7 +11,7 @@ import { LambdaFunction as LambdaTarget } from "aws-cdk-lib/aws-events-targets";
 import { Queue, QueueEncryption } from "aws-cdk-lib/aws-sqs";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import type { Construct } from "constructs";
-import type { InfraIR } from "@laranja/core";
+import { handlerLabel, handlerName, type InfraIR } from "@laranja/core";
 import type { BundledHandler } from "./bundle.js";
 
 export interface LaranjaStackProps extends StackProps {
@@ -71,9 +71,8 @@ export class LaranjaStack extends Stack {
 
     // --- Cron: Lambda + EventBridge rule each ---
     for (const cron of ir.crons) {
-      // Use the method name, unless the user set an explicit @Cron id.
-      const label = cron.id === `${cron.className}-${cron.method}` ? cron.method : cron.id;
-      const fn = makeFn(`Cron${cid(cron.id)}Fn`, cron.id, label, Duration.seconds(60));
+      // Use the handler name, unless the user set an explicit id.
+      const fn = makeFn(`Cron${cid(cron.id)}Fn`, cron.id, handlerLabel(cron), Duration.seconds(60));
       new Rule(this, `Cron${cid(cron.id)}Rule`, {
         schedule: Schedule.expression(cron.schedule),
         targets: [new LambdaTarget(fn)],
@@ -91,7 +90,7 @@ export class LaranjaStack extends Stack {
         // AWS requires visibility timeout >= function timeout; use the 6x guidance.
         visibilityTimeout: Duration.seconds(consumerTimeout.toSeconds() * 6),
       });
-      const fn = makeFn(`Consumer${cid(q.id)}Fn`, q.id, q.method, consumerTimeout);
+      const fn = makeFn(`Consumer${cid(q.id)}Fn`, q.id, handlerName(q), consumerTimeout);
       fn.addEventSource(
         new SqsEventSource(queue, {
           batchSize: q.batchSize ?? 10,

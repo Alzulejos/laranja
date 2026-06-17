@@ -1,6 +1,7 @@
 import path from "node:path";
 import { handlerLabel, handlerName, type InfraIR } from "@laranja/core";
 import { generateEntries } from "@laranja/runtime";
+import { renderAwsSchedule } from "./schedule-aws.js";
 
 /** A file to write, with its path relative to the eject dir. */
 export interface EjectedFile {
@@ -113,7 +114,7 @@ export function generateEjectProject(ir: InfraIR, opts: EjectOptions): EjectedFi
     const label = handlerLabel(cron);
     lines.push(`    const ${v} = lambda("Cron${cid(cron.id)}Fn", ${JSON.stringify(label)}, ${JSON.stringify(entryFileById.get(cron.id))}, 60);`);
     lines.push(`    new Rule(this, "Cron${cid(cron.id)}Rule", {`);
-    lines.push(`      schedule: Schedule.expression(${JSON.stringify(cron.schedule)}),`);
+    lines.push(`      schedule: Schedule.expression(${JSON.stringify(renderAwsSchedule(cron.schedule))}),`);
     lines.push(`      targets: [new LambdaTarget(${v})],`);
     lines.push(`    });`);
   });

@@ -25,7 +25,7 @@ describe("class / decorator style", () => {
       className: "Jobs",
       method: "refreshCache",
       id: "Jobs-refreshCache",
-      schedule: "rate(5 minutes)",
+      schedule: { kind: "rate", value: 5, unit: "minute" },
     });
     expect(ir.queues[0]).toMatchObject({
       style: "method",
@@ -47,7 +47,7 @@ describe("class / decorator style", () => {
       `,
     });
     const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
-    expect(ir.crons[0]).toMatchObject({ id: "nightly", schedule: "rate(1 day)" });
+    expect(ir.crons[0]).toMatchObject({ id: "nightly", schedule: { kind: "rate", value: 1, unit: "day" } });
   });
 });
 
@@ -68,7 +68,7 @@ describe("function / marker style", () => {
       style: "function",
       exportName: "refreshCache",
       id: "refreshCache",
-      schedule: "rate(5 minutes)",
+      schedule: { kind: "rate", value: 5, unit: "minute" },
     });
     expect(ir.queues[0]).toMatchObject({
       style: "function",

@@ -1,6 +1,6 @@
 import { Node, SyntaxKind } from "ts-morph";
 import type { ObjectLiteralExpression } from "ts-morph";
-import { rate, every, type RateUnit } from "@laranja/core";
+import { rate, every, parseScheduleString, type RateUnit, type Schedule } from "@laranja/core";
 
 /** Resolve a literal AST node to a plain JS value, or undefined if not a literal. */
 export function literalValue(node: Node | undefined): string | number | boolean | undefined {
@@ -29,10 +29,10 @@ const RATE_UNITS = new Set<string>(["minute", "minutes", "hour", "hours", "day",
 
 /**
  * Constant-fold a call to laranja's own `rate(...)`/`every(...)` helpers using
- * literal arguments. Returns the AWS schedule string, or undefined if the call
- * isn't a recognized helper or its args aren't literals.
+ * literal arguments. Returns the neutral structured Schedule, or undefined if
+ * the call isn't a recognized helper or its args aren't literals.
  */
-export function foldScheduleCall(node: Node | undefined): string | undefined {
+export function foldScheduleCall(node: Node | undefined): Schedule | undefined {
   if (!node || !Node.isCallExpression(node)) return undefined;
   const callee = node.getExpression();
   if (!Node.isIdentifier(callee)) return undefined;
@@ -53,14 +53,15 @@ export function foldScheduleCall(node: Node | undefined): string | undefined {
 }
 
 /**
- * Resolve a node used as a schedule into an AWS expression string. Accepts a raw
- * string literal or a `rate(...)`/`every(...)` helper call. Returns undefined for
- * anything non-static (e.g. a variable), so callers can raise a clear error.
+ * Resolve a node used as a schedule into the neutral structured Schedule. Accepts
+ * a raw `rate(...)`/`cron(...)` string literal or a `rate(...)`/`every(...)` helper
+ * call. Returns undefined for anything non-static (e.g. a variable) or an
+ * unparseable string (e.g. Unix cron), so callers can raise a clear error.
  */
-export function resolveScheduleNode(node: Node | undefined): string | undefined {
+export function resolveScheduleNode(node: Node | undefined): Schedule | undefined {
   if (!node) return undefined;
   const lit = literalValue(node);
-  if (typeof lit === "string") return lit;
+  if (typeof lit === "string") return parseScheduleString(lit);
   return foldScheduleCall(node);
 }
 

@@ -99,8 +99,8 @@ export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
 
 export type DeploymentStatus = "succeeded" | "failed" | "destroyed";
 
-/** Kind of a deployed resource, for dashboard grouping/icons. */
-export type DeployedResourceKind = "http" | "cron" | "queue" | "lambda";
+/** Kind of a deployed resource, for dashboard grouping/icons. ("function" = a plain compute fn — provider-neutral; was "lambda".) */
+export type DeployedResourceKind = "http" | "cron" | "queue" | "function";
 
 /**
  * A single deployed AWS resource, reported so the dashboard can show an

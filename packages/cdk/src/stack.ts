@@ -13,6 +13,7 @@ import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import type { Construct } from "constructs";
 import { handlerLabel, handlerName, type InfraIR } from "@laranja/core";
 import type { BundledHandler } from "./bundle.js";
+import { renderAwsSchedule } from "./schedule-aws.js";
 
 export interface LaranjaStackProps extends StackProps {
   ir: InfraIR;
@@ -74,7 +75,7 @@ export class LaranjaStack extends Stack {
       // Use the handler name, unless the user set an explicit id.
       const fn = makeFn(`Cron${cid(cron.id)}Fn`, cron.id, handlerLabel(cron), Duration.seconds(60));
       new Rule(this, `Cron${cid(cron.id)}Rule`, {
-        schedule: Schedule.expression(cron.schedule),
+        schedule: Schedule.expression(renderAwsSchedule(cron.schedule)),
         targets: [new LambdaTarget(fn)],
       });
     }

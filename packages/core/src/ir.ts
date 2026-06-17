@@ -7,7 +7,16 @@
  * (free tier) vs. local eject (paid) without touching the scanner.
  */
 
+import type { Schedule } from "./schedule.js";
+
 export type Framework = "express" | "nest";
+
+/**
+ * Target cloud. Only "aws" is implemented today; the rest are planned. The field
+ * lives in the IR so server-side synth can dispatch to the right back-half and
+ * configs written today stay forward-compatible.
+ */
+export type CloudProvider = "aws" | "azure" | "gcp" | "cloudflare";
 
 /** A point in the user's source, for diagnostics / visibility. e.g. "src/jobs.ts:12" */
 export type SourceLocation = string;
@@ -73,12 +82,12 @@ export interface HttpIR {
   routes: HttpRoute[];
 }
 
-/** @Cron('rate(...)') / cron(...) -> EventBridge schedule rule -> its own Lambda. */
+/** @Cron(...) / cron(...) -> scheduled trigger -> its own Lambda. */
 export type CronIR = HandlerRef & {
   /** Stable logical id, used for the CDK construct + function name. */
   id: string;
-  /** EventBridge schedule expression, e.g. "rate(5 minutes)" or "cron(0 12 * * ? *)". */
-  schedule: string;
+  /** Provider-neutral schedule; the back half lowers it to the target's syntax. */
+  schedule: Schedule;
 };
 
 /** @Queue({ name }) / queue(...) -> SQS queue -> its own consumer Lambda. */
@@ -94,6 +103,8 @@ export interface InfraIR {
   app: {
     name: string;
     framework: Framework;
+    /** Target cloud. Defaults to "aws". */
+    provider: CloudProvider;
     /** Deployment stage; part of resource names. */
     stage: string;
     /** Project-relative app entry (same as http.handlerEntry). Absent for workers-only apps. */

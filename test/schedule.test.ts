@@ -1,15 +1,15 @@
 import { describe, test, expect } from "vitest";
-import { rate, every, isAwsScheduleExpression, assertScheduleExpression } from "@laranja/core";
+import { rate, every, parseScheduleString, assertSchedule } from "@laranja/core";
 
 describe("rate()", () => {
-  test("pluralizes for values > 1", () => {
-    expect(rate(5, "minutes")).toBe("rate(5 minutes)");
-    expect(rate(2, "hours")).toBe("rate(2 hours)");
+  test("builds a structured, provider-neutral schedule (pluralization deferred to render time)", () => {
+    expect(rate(5, "minutes")).toEqual({ kind: "rate", value: 5, unit: "minute" });
+    expect(rate(2, "hours")).toEqual({ kind: "rate", value: 2, unit: "hour" });
   });
 
-  test("uses the singular unit when the value is 1", () => {
-    expect(rate(1, "hour")).toBe("rate(1 hour)");
-    expect(rate(1, "minutes")).toBe("rate(1 minute)");
+  test("normalizes to the singular unit", () => {
+    expect(rate(1, "hour")).toEqual({ kind: "rate", value: 1, unit: "hour" });
+    expect(rate(1, "minutes")).toEqual({ kind: "rate", value: 1, unit: "minute" });
   });
 
   test("rejects non-positive / non-integer values", () => {
@@ -21,25 +21,40 @@ describe("rate()", () => {
 
 describe("every()", () => {
   test("is shorthand for rate(1, unit)", () => {
-    expect(every("day")).toBe("rate(1 day)");
-    expect(every("minute")).toBe("rate(1 minute)");
+    expect(every("day")).toEqual({ kind: "rate", value: 1, unit: "day" });
+    expect(every("minute")).toEqual({ kind: "rate", value: 1, unit: "minute" });
   });
 });
 
-describe("schedule validation", () => {
-  test("accepts valid rate() and cron() expressions", () => {
-    expect(isAwsScheduleExpression("rate(5 minutes)")).toBe(true);
-    expect(isAwsScheduleExpression("cron(0 12 * * ? *)")).toBe(true);
+describe("parseScheduleString()", () => {
+  test("parses raw AWS rate()/cron() strings into the neutral form", () => {
+    expect(parseScheduleString("rate(5 minutes)")).toEqual({ kind: "rate", value: 5, unit: "minute" });
+    expect(parseScheduleString("rate(1 hour)")).toEqual({ kind: "rate", value: 1, unit: "hour" });
+    expect(parseScheduleString("cron(0 12 * * ? *)")).toEqual({
+      kind: "cron",
+      expression: "0 12 * * ? *",
+      dialect: "aws",
+    });
   });
 
-  test("rejects Unix-cron and malformed expressions", () => {
-    expect(isAwsScheduleExpression("*/5 * * * *")).toBe(false);
-    expect(isAwsScheduleExpression("rate(5 fortnights)")).toBe(false);
-    expect(isAwsScheduleExpression("every 5 minutes")).toBe(false);
+  test("returns undefined for Unix-cron and malformed expressions", () => {
+    expect(parseScheduleString("*/5 * * * *")).toBeUndefined();
+    expect(parseScheduleString("rate(5 fortnights)")).toBeUndefined();
+    expect(parseScheduleString("every 5 minutes")).toBeUndefined();
+    expect(parseScheduleString("rate(0 minutes)")).toBeUndefined();
+  });
+});
+
+describe("assertSchedule()", () => {
+  test("accepts valid structured schedules", () => {
+    expect(() => assertSchedule({ kind: "rate", value: 5, unit: "minute" }, "x")).not.toThrow();
+    expect(() => assertSchedule({ kind: "cron", expression: "0 12 * * ? *", dialect: "aws" }, "x")).not.toThrow();
   });
 
-  test("assertScheduleExpression throws with location for invalid input", () => {
-    expect(() => assertScheduleExpression("*/5 * * * *", "src/jobs.ts:3")).toThrow(/src\/jobs\.ts:3/);
-    expect(() => assertScheduleExpression("rate(5 minutes)", "x")).not.toThrow();
+  test("throws with location for invalid input", () => {
+    expect(() => assertSchedule({ kind: "rate", value: 0, unit: "minute" }, "src/jobs.ts:3")).toThrow(/src\/jobs\.ts:3/);
+    expect(() => assertSchedule({ kind: "cron", expression: "   ", dialect: "aws" }, "src/jobs.ts:3")).toThrow(
+      /src\/jobs\.ts:3/,
+    );
   });
 });

@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { Project, Node } from "ts-morph";
 import type { ClassDeclaration, MethodDeclaration, SourceFile } from "ts-morph";
 import {
-  assertScheduleExpression,
+  assertSchedule,
   type CronIR,
   type Framework,
   type HttpIR,
@@ -100,9 +100,10 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   }
 
   const stage = config.stage ?? "dev";
+  const provider = config.provider ?? "aws";
 
   return {
-    app: { name: config.name, framework, stage, entry: http?.handlerEntry },
+    app: { name: config.name, framework, provider, stage, entry: http?.handlerEntry },
     http,
     crons,
     queues,
@@ -145,11 +146,11 @@ function collectFromMethod(
       const schedule = resolveScheduleNode(scheduleNode);
       if (!schedule) {
         throw new Error(
-          `@Cron at ${where}: could not resolve a static schedule. ` +
-            `Use a string, rate(n, unit), or every(unit) with literal arguments.`,
+          `@Cron at ${where}: could not resolve a valid static schedule. ` +
+            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
         );
       }
-      assertScheduleExpression(schedule, where);
+      assertSchedule(schedule, where);
 
       crons.push({
         style: "method",
@@ -268,11 +269,11 @@ function collectFromRegistrations(
       const schedule = resolveScheduleNode(scheduleNode);
       if (!schedule) {
         throw new Error(
-          `cron() at ${where}: could not resolve a static schedule. ` +
-            `Use a string, rate(n, unit), or every(unit) with literal arguments.`,
+          `cron() at ${where}: could not resolve a valid static schedule. ` +
+            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
         );
       }
-      assertScheduleExpression(schedule, where);
+      assertSchedule(schedule, where);
       const exportName = resolveExportedHandlerName(sf, args[1], where);
       crons.push({ style: "function", id: explicitId ?? exportName, schedule, file: rel, exportName, source: where });
       return;

@@ -1,12 +1,14 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import type { Framework } from "./ir.js";
+import type { CloudProvider, Framework } from "./ir.js";
 
 /** User-authored config, loaded from `laranja.config.ts`. */
 export interface LaranjaConfig {
   /** App name — used for the CloudFormation stack and resource naming. */
   name: string;
+  /** Target cloud. Only "aws" is implemented today. Defaults to "aws". */
+  provider?: CloudProvider;
   region?: string;
   /** AWS named profile to deploy with. */
   profile?: string;
@@ -36,7 +38,7 @@ export const CONFIG_FILENAME = "laranja.config.ts";
  */
 export async function loadConfig(
   projectDir: string,
-): Promise<Required<Pick<LaranjaConfig, "appExport" | "env" | "stage">> & LaranjaConfig> {
+): Promise<Required<Pick<LaranjaConfig, "appExport" | "env" | "stage" | "provider">> & LaranjaConfig> {
   const file = path.join(projectDir, CONFIG_FILENAME);
   if (!existsSync(file)) {
     throw new Error(`No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`);
@@ -53,6 +55,7 @@ export async function loadConfig(
   return {
     appExport: "app",
     stage: "dev",
+    provider: "aws",
     env: {},
     ...cfg,
   };

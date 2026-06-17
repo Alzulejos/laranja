@@ -7,12 +7,15 @@
  * runtime-reflection paths (and tooling/tests) can enumerate handlers too.
  */
 
-// Re-export the AWS-native schedule builders so users import them alongside @Cron.
+// Re-export the schedule builders + types so users import them alongside @Cron.
 export { rate, every } from "@laranja/core";
-export type { RateUnit } from "@laranja/core";
+export type { RateUnit, Schedule, ScheduleInput } from "@laranja/core";
+
+import type { ScheduleInput } from "@laranja/core";
 
 export interface CronOptions {
-  schedule: string;
+  /** A `rate(...)`/`every(...)` builder result, or a raw provider string. */
+  schedule: ScheduleInput;
   /** Stable logical id. Defaults to "<Class>-<method>". */
   id?: string;
 }
@@ -63,13 +66,20 @@ function registerFunction(kind: HandlerKind, handler: JobHandler, options: CronO
  *   @Cron({ schedule: "cron(0 12 * * ? *)", id: "daily-report" })
  *   async dailyReport() {}
  */
-export function Cron(schedule: string): MethodDecorator;
+export function Cron(schedule: ScheduleInput): MethodDecorator;
 export function Cron(options: CronOptions): MethodDecorator;
-export function Cron(arg: string | CronOptions): MethodDecorator {
-  const options: CronOptions = typeof arg === "string" ? { schedule: arg } : arg;
+export function Cron(arg: ScheduleInput | CronOptions): MethodDecorator {
+  const options = toCronOptions(arg);
   return (target, propertyKey) => {
     register("cron", target, propertyKey, options);
   };
+}
+
+/** Normalize the `Cron`/`cron` first argument (raw string, Schedule, or full options) into CronOptions. */
+function toCronOptions(arg: ScheduleInput | CronOptions): CronOptions {
+  if (typeof arg === "string") return { schedule: arg };
+  if ("kind" in arg) return { schedule: arg }; // a Schedule object
+  return arg; // already CronOptions
 }
 
 /**
@@ -95,11 +105,10 @@ export function Queue(options: QueueOptions): MethodDecorator {
  *   export async function refreshCache() {}
  *   cron(rate(5, "minutes"), refreshCache);
  */
-export function cron(schedule: string, handler: JobHandler): void;
+export function cron(schedule: ScheduleInput, handler: JobHandler): void;
 export function cron(options: CronOptions, handler: JobHandler): void;
-export function cron(arg: string | CronOptions, handler: JobHandler): void {
-  const options: CronOptions = typeof arg === "string" ? { schedule: arg } : arg;
-  registerFunction("cron", handler, options);
+export function cron(arg: ScheduleInput | CronOptions, handler: JobHandler): void {
+  registerFunction("cron", handler, toCronOptions(arg));
 }
 
 /**

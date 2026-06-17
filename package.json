@@ -1,0 +1,25 @@
+{
+  "name": "laranja-monorepo",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "scan:express": "tsx packages/scanner/src/dev-scan.ts examples/express-basic",
+    "build:express": "tsx packages/runtime/src/dev-build.ts examples/express-basic",
+    "synth:express": "tsx packages/cdk/src/dev-synth.ts examples/express-basic",
+    "laranja": "tsx packages/cli/src/cli.ts",
+    "deploy:express": "tsx packages/cli/src/cli.ts deploy examples/express-basic",
+    "destroy:express": "tsx packages/cli/src/cli.ts destroy examples/express-basic",
+    "typecheck": "tsc -b"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.0",
+    "esbuild": "^0.28.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  }
+}

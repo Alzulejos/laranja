@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.laranja/
+cdk.out/
+*.log
+.DS_Store
+.env
+.env.*

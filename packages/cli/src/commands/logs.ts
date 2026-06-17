@@ -30,8 +30,12 @@ export async function logs(projectDir: string, opts: LogsOptions = {}): Promise<
 
   // The live CloudFormation stack is the source of truth — no local state needed.
   const sp = ui.spinner("finding functions");
-  const fns = await listStackLambdas(region, config.name);
-  sp.stop();
+  let fns: DeployedLambda[];
+  try {
+    fns = await listStackLambdas(region, config.name);
+  } finally {
+    sp.stop(); // always clear the spinner, even when discovery throws
+  }
   if (fns.length === 0) throw new Error(`Stack "${config.name}" has no Lambda functions.`);
 
   const label = (f: DeployedLambda): string => shortLabel(f.functionName, config.name, config.stage);

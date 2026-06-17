@@ -1,0 +1,36 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`full output snapshot > mixed app + cron + queue generates a stable set of shims 1`] = `
+[
+  {
+    "contents": "import app from "../../src/app";
+import { createHttpHandler } from "@laranja/runtime";
+
+export const handler = createHttpHandler(app);
+",
+    "fileName": "http.ts",
+    "id": "http",
+    "kind": "http",
+  },
+  {
+    "contents": "import { refreshCache } from "../../src/jobs";
+import { createScheduledHandler } from "@laranja/runtime";
+
+export const handler = createScheduledHandler(refreshCache);
+",
+    "fileName": "cron-refreshCache.ts",
+    "id": "refreshCache",
+    "kind": "cron",
+  },
+  {
+    "contents": "import { Jobs } from "../../src/jobs";
+import { createQueueHandler } from "@laranja/runtime";
+
+export const handler = createQueueHandler(Jobs, "sendEmails");
+",
+    "fileName": "queue-Jobs-sendEmails.ts",
+    "id": "Jobs-sendEmails",
+    "kind": "queue",
+  },
+]
+`;

@@ -26,6 +26,7 @@ Commands:
 
 Flags:
   --verbose, -v   Show full CDK/CloudFormation output (deploy/destroy)
+  --remote        synth: synthesize on the laranja server instead of locally
   --all           logs: tail every function (multiplexed)
   --no-follow     logs: print recent history and exit (no live tail)
   --since <dur>   logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
@@ -40,10 +41,10 @@ async function main(): Promise<void> {
 
   switch (command) {
     case "init":
-      init(projectDir);
+      await init(projectDir);
       break;
     case "synth":
-      await synthCommand(projectDir);
+      await synthCommand(projectDir, { remote: rest.includes("--remote") });
       break;
     case "deploy":
       await deploy(projectDir, { verbose });

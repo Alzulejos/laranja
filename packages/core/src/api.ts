@@ -4,8 +4,10 @@
  * This module is TYPES ONLY (plus a couple of constants) — no runtime logic — so
  * it can be shared verbatim by the CLI and the backend and keep them in lockstep.
  *
- * Auth: every request carries the user's API key in an `Authorization: Bearer
- * <API_KEY>` header. It is intentionally NOT part of any body type below.
+ * Auth: every request carries the user's API key in an `x-api-key: <API_KEY>`
+ * header. Project-scoped calls (e.g. `/synth`) also send the dashboard project
+ * id in an `x-project-id: <projectId>` header. Neither is part of any body type
+ * below — identity/context lives in headers, synth inputs in the body.
  *
  * Only the Infra IR crosses the wire — never the user's source code.
  */

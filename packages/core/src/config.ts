@@ -7,6 +7,12 @@ import type { CloudProvider, Framework } from "./ir.js";
 export interface LaranjaConfig {
   /** App name — used for the CloudFormation stack and resource naming. */
   name: string;
+  /**
+   * Project id from your laranja dashboard. Identifies this project on the
+   * server (scoping, limits, deploy timeline); sent as the `x-project-id`
+   * header on `/synth`. Obtain it when you create the project in the dashboard.
+   */
+  projectId?: string;
   /** Target cloud. Only "aws" is implemented today. Defaults to "aws". */
   provider?: CloudProvider;
   region?: string;

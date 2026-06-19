@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { CONFIG_FILENAME, getMe, resolveApiKey, resolveApiUrl, ApiRequestError } from "@laranja/core";
 import * as ui from "../ui.js";
 
@@ -18,6 +18,20 @@ const config: LaranjaConfig = {
 
 export default config;
 `;
+
+/**
+ * Fill the empty `projectId: ""` in the config with the value from `/me`.
+ * Leaves a non-empty projectId untouched so we never clobber a user's edit.
+ * Returns true if the file was updated.
+ */
+function writeProjectId(file: string, projectId: string): boolean {
+  if (!projectId) return false;
+  const content = readFileSync(file, "utf8");
+  const updated = content.replace(/projectId:\s*""/, `projectId: ${JSON.stringify(projectId)}`);
+  if (updated === content) return false;
+  writeFileSync(file, updated);
+  return true;
+}
 
 export async function init(projectDir: string): Promise<void> {
   const file = path.join(projectDir, CONFIG_FILENAME);
@@ -39,7 +53,11 @@ export async function init(projectDir: string): Promise<void> {
 
   try {
     const me = await getMe(apiKey);
-    console.log(`\n  ${ui.green("✓")} Connected — tier ${ui.bold(me.tier)}.`);
+    console.log(`\n  ${ui.green("✓")} Hi ${ui.bold(me.displayName)}, let's ship something great! 🍊`);
+
+    if (writeProjectId(file, me.projectId)) {
+      console.log(`  ${ui.dim(`Wrote projectId ${me.projectId} to ${CONFIG_FILENAME}.`)}`);
+    }
     console.log('  Next: set "name"/"entry", then run `laranja deploy`.');
   } catch (err) {
     if (err instanceof ApiRequestError) {

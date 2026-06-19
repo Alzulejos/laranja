@@ -1,6 +1,6 @@
 import path from "node:path";
 import { rmSync } from "node:fs";
-import { loadConfig, type InfraIR } from "@laranja/core";
+import { loadConfig, stackName, type InfraIR } from "@laranja/core";
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, synth } from "@laranja/cdk";
@@ -19,7 +19,7 @@ export interface Assembly {
  */
 export async function buildAssembly(
   projectDir: string,
-  env?: { region?: string; account?: string },
+  env?: { region?: string; account?: string; stage?: string },
 ): Promise<Assembly> {
   const outRoot = path.join(projectDir, ".laranja");
   const entryDir = path.join(outRoot, "entries");
@@ -28,18 +28,19 @@ export async function buildAssembly(
 
   rmSync(outRoot, { recursive: true, force: true });
 
-  const config = await loadConfig(projectDir);
+  const config = await loadConfig(projectDir, { stage: env?.stage });
+  const name = stackName(config.name, config.stage);
   const ir = scan({ projectDir, config });
   const entries = generateEntries(ir, { projectDir, entryDir });
   const handlers = await bundleEntries(entries, { entryDir, buildDir });
   synth(ir, handlers, {
     outdir: cdkOutDir,
-    stackName: config.name,
+    stackName: name,
     region: env?.region ?? config.region,
     account: env?.account,
   });
 
-  return { ir, stackName: config.name, cdkOutDir, region: env?.region ?? config.region };
+  return { ir, stackName: name, cdkOutDir, region: env?.region ?? config.region };
 }
 
 export function printPlan(ir: InfraIR): void {

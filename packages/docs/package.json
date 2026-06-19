@@ -1,0 +1,23 @@
+{
+  "name": "@laranja/docs",
+  "version": "0.0.0",
+  "description": "Canonical laranja documentation, parsed and exported as a module for any frontend to render.",
+  "type": "module",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./content/*": "./content/*"
+  },
+  "files": ["dist", "content"],
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "github-slugger": "^2.0.0"
+  }
+}

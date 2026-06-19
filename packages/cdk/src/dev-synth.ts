@@ -7,7 +7,7 @@
  */
 import path from "node:path";
 import { readFileSync, rmSync } from "node:fs";
-import { loadConfig } from "@laranja/core";
+import { loadConfig, stackName } from "@laranja/core";
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries } from "./bundle.js";
@@ -27,7 +27,7 @@ async function main() {
   });
   const { templatePath } = synth(ir, handlers, {
     outdir: path.join(outRoot, "cdk.out"),
-    stackName: config.name,
+    stackName: stackName(config.name, config.stage),
     region: config.region,
   });
 
@@ -41,7 +41,7 @@ async function main() {
     counts[r.Type] = (counts[r.Type] ?? 0) + 1;
   }
 
-  console.log(`Synthesized stack "${config.name}" (region ${config.region ?? "agnostic"})`);
+  console.log(`Synthesized stack "${stackName(config.name, config.stage)}" (region ${config.region ?? "agnostic"})`);
   console.log(`Template: ${path.relative(projectDir, templatePath)}\n`);
   console.log("Resources:");
   for (const [type, count] of Object.entries(counts).sort()) {

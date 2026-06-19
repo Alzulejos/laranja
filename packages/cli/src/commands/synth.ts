@@ -11,13 +11,13 @@ import { scan } from "@laranja/scanner";
 import { buildAssembly, printPlan } from "../pipeline.js";
 
 /** Build + synth only (no AWS calls). Useful for inspecting what would deploy. */
-export async function synthCommand(projectDir: string, opts: { remote?: boolean } = {}): Promise<void> {
+export async function synthCommand(projectDir: string, opts: { remote?: boolean; stage?: string } = {}): Promise<void> {
   if (opts.remote) {
-    await synthRemote(projectDir);
+    await synthRemote(projectDir, opts.stage);
     return;
   }
 
-  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir);
+  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, { stage: opts.stage });
   const templatePath = path.join(cdkOutDir, `${stackName}.template.json`);
   const tpl = JSON.parse(readFileSync(templatePath, "utf8")) as { Resources: Record<string, { Type: string }> };
 
@@ -38,11 +38,11 @@ export async function synthCommand(projectDir: string, opts: { remote?: boolean 
  * Phase 2a — the template references handler assets by id and is NOT yet
  * deployable (the asset seam / S3 upload lands in 2b). Proves the wire + IR.
  */
-async function synthRemote(projectDir: string): Promise<void> {
+async function synthRemote(projectDir: string, stage?: string): Promise<void> {
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("Set LARANJA_API_KEY to synth on the server.");
 
-  const config = await loadConfig(projectDir);
+  const config = await loadConfig(projectDir, { stage });
   if (!config.projectId) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to synth on the server.');
   }

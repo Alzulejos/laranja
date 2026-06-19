@@ -3,7 +3,7 @@ import {
   StartLiveTailCommand,
   FilterLogEventsCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
-import { loadConfig } from "@laranja/core";
+import { loadConfig, stackName } from "@laranja/core";
 import { getAccountId, listStackLambdas, type DeployedLambda, type LambdaKind } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 import * as ui from "../ui.js";
@@ -19,24 +19,27 @@ export interface LogsOptions {
   follow?: boolean;
   /** Look-back window for the historical dump, e.g. "1h", "30m", "10s". */
   since?: string;
+  /** Deployment stage — selects which stack's functions to tail. */
+  stage?: string;
 }
 
 export async function logs(projectDir: string, opts: LogsOptions = {}): Promise<void> {
-  const config = await loadConfig(projectDir);
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
-  ui.header(`logs ${config.name} ${ui.dim("→")} ${region}`);
+  const stack = stackName(config.name, config.stage);
+  ui.header(`logs ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 
   // The live CloudFormation stack is the source of truth — no local state needed.
   const sp = ui.spinner("finding functions");
   let fns: DeployedLambda[];
   try {
-    fns = await listStackLambdas(region, config.name);
+    fns = await listStackLambdas(region, stack);
   } finally {
     sp.stop(); // always clear the spinner, even when discovery throws
   }
-  if (fns.length === 0) throw new Error(`Stack "${config.name}" has no Lambda functions.`);
+  if (fns.length === 0) throw new Error(`Stack "${stack}" has no Lambda functions.`);
 
   const label = (f: DeployedLambda): string => shortLabel(f.functionName, config.name, config.stage);
   const targets = await chooseTargets(fns, label, opts);

@@ -25,18 +25,45 @@ Commands:
   eject      Generate an owned, editable CDK project (paid)
 
 Flags:
-  --verbose, -v   Show full CDK/CloudFormation output (deploy/destroy)
-  --remote        synth: synthesize on the laranja server instead of locally
-  --all           logs: tail every function (multiplexed)
-  --no-follow     logs: print recent history and exit (no live tail)
-  --since <dur>   logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
+  --stage, -s <name>  Deployment stage to target, e.g. dev/staging/prod
+                      (overrides config; deploy/synth/diff/destroy/logs/eject)
+  --verbose, -v       Show full CDK/CloudFormation output (deploy/destroy)
+  --remote            synth: synthesize on the laranja server instead of locally
+  --all               logs: tail every function (multiplexed)
+  --no-follow         logs: print recent history and exit (no live tail)
+  --since <dur>       logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
 
 project-dir defaults to the current directory.
 `;
 
+/**
+ * Pull a `--name <value>` (or alias) flag out of args, returning the value and
+ * recording the indices it consumed. Tracking consumed indices lets positional
+ * parsing (project-dir, the logs function name) skip a flag's value instead of
+ * treating it as a positional. Last occurrence wins.
+ */
+function flagValue(args: string[], names: string[], consumed: Set<number>): string | undefined {
+  let value: string | undefined;
+  for (let i = 0; i < args.length; i++) {
+    if (names.includes(args[i])) {
+      value = args[i + 1];
+      consumed.add(i);
+      consumed.add(i + 1);
+    }
+  }
+  return value;
+}
+
 async function main(): Promise<void> {
   const [command, ...rest] = process.argv.slice(2);
-  const projectDir = path.resolve(rest.find((a) => !a.startsWith("-")) ?? ".");
+
+  // Value-flags first, so their values aren't mistaken for positional args.
+  const consumed = new Set<number>();
+  const stage = flagValue(rest, ["--stage", "-s"], consumed);
+  const since = flagValue(rest, ["--since"], consumed);
+  const positionals = rest.filter((a, i) => !a.startsWith("-") && !consumed.has(i));
+
+  const projectDir = path.resolve(positionals[0] ?? ".");
   const verbose = rest.includes("--verbose") || rest.includes("-v");
 
   switch (command) {
@@ -44,39 +71,37 @@ async function main(): Promise<void> {
       await init(projectDir);
       break;
     case "synth":
-      await synthCommand(projectDir, { remote: rest.includes("--remote") });
+      await synthCommand(projectDir, { remote: rest.includes("--remote"), stage });
       break;
     case "deploy":
-      await deploy(projectDir, { verbose });
+      await deploy(projectDir, { verbose, stage });
       break;
     case "diff":
-      await diff(projectDir);
+      await diff(projectDir, { stage });
       break;
     case "destroy":
-      await destroy(projectDir, { verbose });
+      await destroy(projectDir, { verbose, stage });
       break;
     case "logs": {
       // Positionals: an existing directory is the project dir; anything else is
       // the function name. So `logs api`, `logs ./app`, and `logs ./app api` all work.
-      const positionals = rest.filter((a) => !a.startsWith("-"));
       let dir = ".";
       let name: string | undefined;
       for (const p of positionals) {
         if (existsSync(p) && statSync(p).isDirectory()) dir = p;
         else name = p;
       }
-      const sinceIdx = rest.findIndex((a) => a === "--since");
-      const since = sinceIdx >= 0 ? rest[sinceIdx + 1] : undefined;
       await logs(path.resolve(dir), {
         name,
         all: rest.includes("--all"),
         follow: !rest.includes("--no-follow"),
         since,
+        stage,
       });
       break;
     }
     case "eject":
-      await eject(projectDir, { force: rest.includes("--force") });
+      await eject(projectDir, { force: rest.includes("--force"), stage });
       break;
     case "help":
     case "--help":

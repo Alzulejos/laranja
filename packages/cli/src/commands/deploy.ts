@@ -8,18 +8,18 @@ import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
 
-export async function deploy(projectDir: string, opts: { verbose?: boolean } = {}): Promise<void> {
+export async function deploy(projectDir: string, opts: { verbose?: boolean; stage?: string } = {}): Promise<void> {
   const started = Date.now();
-  const config = await loadConfig(projectDir);
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
-  ui.header(`deploy ${config.name} ${ui.dim("→")} ${region}`);
+  ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 
   const account = await getAccountId(region);
   ui.step("🔑", "account", account);
 
-  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, { region, account });
+  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, { region, account, stage: opts.stage });
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
   ui.step("📦", "build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);

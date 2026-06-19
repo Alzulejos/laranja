@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig } from "@laranja/core";
+import { loadConfig, stackName } from "@laranja/core";
 import { scan } from "@laranja/scanner";
 import { generateEjectProject } from "@laranja/cdk";
 
@@ -19,10 +19,10 @@ function requireLicense(): void {
   }
 }
 
-export async function eject(projectDir: string, opts: { force?: boolean }): Promise<void> {
+export async function eject(projectDir: string, opts: { force?: boolean; stage?: string }): Promise<void> {
   requireLicense();
 
-  const config = await loadConfig(projectDir);
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   const ir = scan({ projectDir, config });
 
   const ejectDir = path.join(projectDir, "infra");
@@ -33,7 +33,7 @@ export async function eject(projectDir: string, opts: { force?: boolean }): Prom
   const files = generateEjectProject(ir, {
     projectDir,
     ejectDir,
-    stackName: config.name,
+    stackName: stackName(config.name, config.stage),
     region: config.region,
   });
 

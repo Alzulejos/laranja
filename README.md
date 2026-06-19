@@ -168,13 +168,29 @@ laranja logs       # tail CloudWatch logs for a deployed function
 laranja eject      # generate an owned CDK project (Pro)
 
 # flags
-  --verbose, -v    # stream full CDK/CloudFormation output
-  --all            # logs: tail every function (multiplexed)
-  --no-follow      # logs: print recent history and exit
-  --since <dur>    # logs: history look-back, e.g. 30s, 15m, 1h, 2d
+  --stage, -s <name>  # target a stage (dev/staging/prod); overrides config
+  --verbose, -v       # stream full CDK/CloudFormation output
+  --all               # logs: tail every function (multiplexed)
+  --no-follow         # logs: print recent history and exit
+  --since <dur>       # logs: history look-back, e.g. 30s, 15m, 1h, 2d
 ```
 
 Each command takes an optional `[project-dir]` (defaults to the current directory).
+
+### Stages
+
+`--stage` (alias `-s`) overrides `config.stage` and applies to `deploy`, `synth`,
+`diff`, `destroy`, `logs`, and `eject`. Each stage is its own CloudFormation stack
+named `‹name›-‹stage›`, so one repo drives a pipeline per environment:
+
+```bash
+laranja deploy --stage dev
+laranja deploy --stage staging
+laranja deploy --stage prod
+```
+
+Stages can live in one AWS account (distinct stacks) or in separate accounts
+(your AWS credentials are the boundary) — either way the stacks never collide.
 
 ## Configuration
 
@@ -183,12 +199,12 @@ Each command takes an optional `[project-dir]` (defaults to the current director
 | `name` | ✅ | — | App name; used for the stack and resource names |
 | `entry` | ✅ | — | Project-relative module exporting your app |
 | `region` | | `AWS_REGION` | AWS region to deploy to |
-| `stage` | | `"dev"` | Stage; part of resource names, also injected as `STAGE` env |
+| `stage` | | `"dev"` | Stage; part of the stack + resource names, also injected as `STAGE` env. Override per-run with `--stage` |
 | `appExport` | | `"app"` | Named export of the app within `entry` |
 | `profile` | | — | AWS named profile to deploy with |
 | `env` | | `{}` | Plain env vars injected into every Lambda |
 
-**Resource naming:** Lambdas are named `‹name›-‹fn›-‹stage›` (e.g. `my-api-app-prod`, `my-api-sendEmails-prod`) — deterministic, no random suffixes.
+**Resource naming:** the stack is `‹name›-‹stage›` (e.g. `my-api-prod`) and Lambdas are `‹name›-‹fn›-‹stage›` (e.g. `my-api-app-prod`, `my-api-sendEmails-prod`) — deterministic, no random suffixes.
 
 ---
 

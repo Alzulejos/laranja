@@ -16,14 +16,17 @@ import type { InfraIR } from "./ir.js";
 
 export const API_VERSION = "v1";
 
+/** Server mounts every route under this prefix (NestJS global prefix + version). */
+export const API_PREFIX = `/api/${API_VERSION}`;
+
 /** Shared endpoint paths, so both sides reference the same strings. */
 export const ENDPOINTS = {
   /** GET — verify the API key + return tier/limits (used by `laranja init`). */
-  me: `/${API_VERSION}/me`,
+  me: `${API_PREFIX}/me`,
   /** POST — IR in, CloudFormation template (or CDK files) out. */
-  synth: `/${API_VERSION}/synth`,
+  synth: `${API_PREFIX}/synth`,
   /** POST — report a deploy/destroy outcome for the dashboard timeline. */
-  deployments: `/${API_VERSION}/deployments`,
+  deployments: `${API_PREFIX}/deployments`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -40,11 +43,11 @@ export interface Limits {
   canEject: boolean;
 }
 
-/** Response from `GET /v1/me` — lets `laranja init` validate the key + show limits. */
+/** Response from `GET /v1/me` — lets `laranja init` validate the key + greet the user. */
 export interface MeResponse {
   userId: string;
-  tier: Tier;
-  limits: Limits;
+  displayName: string;
+  projectId: string;
 }
 
 /* -------------------------------------------------------------------------- */

@@ -38,12 +38,32 @@ export interface LaranjaConfig {
 
 export const CONFIG_FILENAME = "laranja.config.ts";
 
+/** Overrides applied on top of the loaded config — e.g. a `--stage` CLI flag. */
+export interface ConfigOverrides {
+  /** Wins over `config.stage`. Used by the `--stage`/`-s` flag for per-stage pipelines. */
+  stage?: string;
+}
+
+/**
+ * The CloudFormation stack name for a project + stage: `<name>-<stage>`.
+ *
+ * Stage is part of the stack name (not just the Lambda names) so two stages can
+ * be deployed to the SAME account without colliding — one definition, two
+ * independent stacks. With separate dev/prod accounts the suffix is harmless.
+ * Single source of truth: every command must derive the stack name from here.
+ */
+export function stackName(name: string, stage: string): string {
+  return `${name}-${stage}`;
+}
+
 /**
  * Loads `laranja.config.ts` from the project dir. Runs under tsx, so importing a
- * TypeScript config module Just Works. Returns the config with defaults applied.
+ * TypeScript config module Just Works. Returns the config with defaults applied,
+ * then any `overrides` (e.g. a `--stage` flag) layered on top.
  */
 export async function loadConfig(
   projectDir: string,
+  overrides: ConfigOverrides = {},
 ): Promise<Required<Pick<LaranjaConfig, "appExport" | "env" | "stage" | "provider">> & LaranjaConfig> {
   const file = path.join(projectDir, CONFIG_FILENAME);
   if (!existsSync(file)) {
@@ -64,5 +84,7 @@ export async function loadConfig(
     provider: "aws",
     env: {},
     ...cfg,
+    // Overrides win over both defaults and the config file (only when set).
+    ...(overrides.stage ? { stage: overrides.stage } : {}),
   };
 }

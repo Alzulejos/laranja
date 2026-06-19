@@ -6,21 +6,21 @@ import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
 
-export async function destroy(projectDir: string, opts: { verbose?: boolean } = {}): Promise<void> {
-  const config = await loadConfig(projectDir);
+export async function destroy(projectDir: string, opts: { verbose?: boolean; stage?: string } = {}): Promise<void> {
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
   const account = await getAccountId(region);
-  ui.header(`destroy ${config.name} ${ui.dim("→")} ${region}`);
+  ui.header(`destroy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
   ui.step("🔑", "account", account);
-  ui.note(`this will DELETE the "${config.name}" stack and its resources.`);
+  ui.note(`this will DELETE the "${config.name}" (${config.stage}) stack and its resources.`);
   if (!(await confirm("     are you sure? (y/N)"))) {
     console.log("\n  aborted.\n");
     return;
   }
 
-  const { cdkOutDir } = await buildAssembly(projectDir, { region, account });
+  const { cdkOutDir } = await buildAssembly(projectDir, { region, account, stage: opts.stage });
   const ioHost = new LaranjaIoHost(opts.verbose);
   const toolkit = new Toolkit({ ioHost });
   const sp = ui.spinner("tearing down stack");

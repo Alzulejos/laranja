@@ -5,13 +5,13 @@ import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 
 /** Diff the synthesized stack against what's currently deployed. */
-export async function diff(projectDir: string): Promise<void> {
-  const config = await loadConfig(projectDir);
+export async function diff(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
   const account = await getAccountId(region);
-  const { cdkOutDir } = await buildAssembly(projectDir, { region, account });
+  const { cdkOutDir } = await buildAssembly(projectDir, { region, account, stage: opts.stage });
 
   const toolkit = new Toolkit({ ioHost: new NonInteractiveIoHost() });
   const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);

@@ -13,6 +13,7 @@ import {
   type ApiError,
   type ApiErrorCode,
 } from "./api.js";
+import { loadStoredApiKey } from "./auth.js";
 
 /** Default server URL for local development. Override with `LARANJA_API_URL`. */
 export const DEFAULT_API_URL = "http://localhost:3000";
@@ -22,9 +23,13 @@ export function resolveApiUrl(): string {
   return (process.env.LARANJA_API_URL ?? DEFAULT_API_URL).replace(/\/+$/, "");
 }
 
-/** The caller's API key, from the environment. */
+/**
+ * The caller's API key. Precedence: `LARANJA_API_KEY` env var (CI / one-off
+ * override) wins, then the key persisted by `laranja init` (~/.laranja/auth.json).
+ * The env override means a stored login never blocks a different key in CI.
+ */
 export function resolveApiKey(): string | undefined {
-  return process.env.LARANJA_API_KEY?.trim() || undefined;
+  return (process.env.LARANJA_API_KEY?.trim() || undefined) ?? loadStoredApiKey();
 }
 
 /** A failed API call — carries the server's error code so callers can branch. */

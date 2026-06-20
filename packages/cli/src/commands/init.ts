@@ -1,6 +1,14 @@
 import path from "node:path";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { CONFIG_FILENAME, getMe, resolveApiKey, resolveApiUrl, ApiRequestError } from "@laranja/core";
+import {
+  CONFIG_FILENAME,
+  getMe,
+  resolveApiKey,
+  resolveApiUrl,
+  loadStoredApiKey,
+  storeAuth,
+  ApiRequestError,
+} from "@laranja/core";
 import * as ui from "../ui.js";
 
 const TEMPLATE = `import type { LaranjaConfig } from "@laranja/core";
@@ -43,17 +51,28 @@ export async function init(projectDir: string): Promise<void> {
   }
 
   // Handshake: validate the API key against the server before the user deploys.
-  const apiKey = resolveApiKey();
+  // Precedence: env var / already-stored key, else prompt for it interactively.
+  let apiKey = resolveApiKey();
   if (!apiKey) {
-    console.log(
-      `\n  ${ui.dim("Set LARANJA_API_KEY to connect your account, then re-run `laranja init`.")}`,
-    );
-    return;
+    apiKey = await ui.promptSecret("Paste your laranja API key:");
+    if (!apiKey) {
+      console.log(
+        `\n  ${ui.dim("No API key provided. Set LARANJA_API_KEY (or re-run `laranja init`) to connect your account.")}`,
+      );
+      return;
+    }
   }
 
   try {
     const me = await getMe(apiKey);
     console.log(`\n  ${ui.green("✓")} Hi ${ui.bold(me.displayName)}, let's ship something great! 🍊`);
+
+    // Persist the validated key so future commands don't need it re-exported.
+    // Skip the write if it's already what's on disk (e.g. supplied via env).
+    if (apiKey !== loadStoredApiKey()) {
+      const stored = storeAuth({ apiKey, apiUrl: resolveApiUrl() });
+      console.log(`  ${ui.dim(`Saved your API key to ${stored} — no need to re-export it.`)}`);
+    }
 
     if (writeProjectId(file, me.projectId)) {
       console.log(`  ${ui.dim(`Wrote projectId ${me.projectId} to ${CONFIG_FILENAME}.`)}`);

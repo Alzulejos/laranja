@@ -40,6 +40,52 @@ export interface Choice<T> {
 }
 
 /**
+ * Read a single line of secret input (e.g. an API key) without echoing it.
+ * Shows `•` per character so the user sees progress. Returns the trimmed value,
+ * or `undefined` if cancelled (Esc / Ctrl-C) or there's no TTY to read from.
+ * Cross-platform: uses raw stdin, which Node supports on Windows/macOS/Linux.
+ */
+export function promptSecret(question: string): Promise<string | undefined> {
+  return new Promise((resolve) => {
+    const { stdin, stdout } = process;
+    if (!stdin.isTTY) return resolve(undefined);
+
+    let value = "";
+    stdout.write(`  ${question} `);
+
+    const cleanup = () => {
+      stdin.setRawMode(false);
+      stdin.pause();
+      stdin.removeListener("data", onData);
+      stdout.write("\n");
+    };
+
+    const onData = (buf: Buffer) => {
+      const key = buf.toString();
+      if (key === "\r" || key === "\n") {
+        cleanup();
+        resolve(value.trim() || undefined);
+      } else if (key === "\x03" || key === "\x1b") {
+        cleanup(); // Ctrl-C / Esc
+        resolve(undefined);
+      } else if (key === "\x7f" || key === "\b") {
+        if (value.length > 0) {
+          value = value.slice(0, -1);
+          stdout.write("\b \b"); // erase one masked char
+        }
+      } else {
+        value += key;
+        stdout.write("•");
+      }
+    };
+
+    stdin.setRawMode(true);
+    stdin.resume();
+    stdin.on("data", onData);
+  });
+}
+
+/**
  * A zero-dependency arrow-key picker. Returns the chosen value, or undefined if
  * the user cancels (q / Esc / Ctrl-C). Requires a TTY — callers must handle the
  * non-TTY case themselves (there's no interactive input to read).

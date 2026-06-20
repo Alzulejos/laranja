@@ -2,6 +2,7 @@
 import path from "node:path";
 import { existsSync, statSync } from "node:fs";
 import { init } from "./commands/init.js";
+import { logout } from "./commands/logout.js";
 import { synthCommand } from "./commands/synth.js";
 import { deploy } from "./commands/deploy.js";
 import { diff } from "./commands/diff.js";
@@ -16,7 +17,8 @@ Usage:
   laranja <command> [project-dir]
 
 Commands:
-  init       Scaffold a laranja.config.ts
+  init       Scaffold a laranja.config.ts (prompts for + stores your API key)
+  logout     Remove the stored API key (~/.laranja/auth.json)
   synth      Build + show the planned AWS resources (no AWS calls)
   deploy     Deploy into your AWS account (uses local credentials)
   diff       Diff the plan against what's deployed
@@ -69,6 +71,9 @@ async function main(): Promise<void> {
   switch (command) {
     case "init":
       await init(projectDir);
+      break;
+    case "logout":
+      await logout();
       break;
     case "synth":
       await synthCommand(projectDir, { remote: rest.includes("--remote"), stage });

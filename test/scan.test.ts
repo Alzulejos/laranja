@@ -187,3 +187,55 @@ describe("nothing to deploy", () => {
     expect(() => scan({ projectDir: dir, config: cfg({ http: false }) })).toThrow(/Nothing to deploy/);
   });
 });
+
+describe("env() discovery", () => {
+  test("collects env('LITERAL') names — deduped, sorted, location-independent", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate, env } from "@laranja/decorators";
+        const region = env("AWS_REGION");
+        export async function refreshCache() {
+          // a call buried in a handler body still counts (pure source analysis)
+          const url = env("DATABASE_URL");
+          const dup = env("AWS_REGION");
+          return { url, region, dup };
+        }
+        cron(rate(10, "minutes"), refreshCache);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
+    expect(ir.envKeys).toEqual(["AWS_REGION", "DATABASE_URL"]);
+  });
+
+  test("is alias-aware and ignores dynamic (non-literal) names", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate, env as readEnv } from "@laranja/decorators";
+        const name = "DYNAMIC";
+        export async function job() {
+          const a = readEnv("STRIPE_KEY");
+          const b = readEnv(name);          // dynamic — intentionally skipped
+          return { a, b };
+        }
+        cron(rate(1, "hour"), job);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
+    expect(ir.envKeys).toEqual(["STRIPE_KEY"]);
+  });
+
+  test("ignores an env() that isn't laranja's helper", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate } from "@laranja/decorators";
+        function env(_n: string) { return ""; } // local shadow, not the helper
+        export async function job() {
+          return env("NOT_LARANJA");
+        }
+        cron(rate(1, "hour"), job);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
+    expect(ir.envKeys).toEqual([]);
+  });
+});

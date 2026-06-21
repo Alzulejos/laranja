@@ -49,6 +49,7 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const queues: QueueIR[] = [];
   const routes: HttpRoute[] = [];
   const httpMarkers: HttpMarker[] = [];
+  const envKeys = new Set<string>();
 
   for (const sf of project.getSourceFiles()) {
     const rel = path.relative(projectDir, sf.getFilePath());
@@ -64,6 +65,8 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     if (regImports.size > 0) {
       collectFromRegistrations(rel, sf, regImports, crons, queues);
     }
+
+    collectEnvKeys(sf, envKeys);
 
     if (framework === "express") {
       collectExpressRoutes(rel, sf, routes);
@@ -109,6 +112,8 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     queues,
     // STAGE is always available at runtime, overridable via explicit env.
     env: { STAGE: stage, ...config.env },
+    // Names only — values are resolved client-side at deploy time.
+    envKeys: [...envKeys].sort(),
   };
 }
 
@@ -367,5 +372,39 @@ function collectExpressRoutes(rel: string, sf: SourceFile, routes: HttpRoute[]):
       path: firstArg.getLiteralText(),
       source: loc(rel, node),
     });
+  });
+}
+
+/** Local identifiers in this file bound to laranja's `env` helper (alias-aware). */
+function envHelperNames(sf: SourceFile): Set<string> {
+  const names = new Set<string>();
+  for (const imp of sf.getImportDeclarations()) {
+    if (!REGISTRATION_MODULES.has(imp.getModuleSpecifierValue())) continue;
+    for (const named of imp.getNamedImports()) {
+      if (named.getName() === "env") names.add(named.getAliasNode()?.getText() ?? "env");
+    }
+  }
+  return names;
+}
+
+/**
+ * Discover `env("NAME")` calls and collect the declared variable NAMES. The
+ * argument must be a string literal — `env(someVar)` is intentionally ignored
+ * (we can't know the name statically; this keeps env discovery deterministic and
+ * auditable). Location is irrelevant: a call buried in a handler body counts the
+ * same as one at module scope, because this is pure source analysis.
+ */
+function collectEnvKeys(sf: SourceFile, keys: Set<string>): void {
+  const names = envHelperNames(sf);
+  if (names.size === 0) return;
+
+  sf.forEachDescendant((node) => {
+    if (!Node.isCallExpression(node)) return;
+    const callee = node.getExpression();
+    if (!Node.isIdentifier(callee) || !names.has(callee.getText())) return;
+    const arg = node.getArguments()[0];
+    if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) {
+      keys.add(arg.getLiteralText());
+    }
   });
 }

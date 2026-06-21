@@ -10,6 +10,11 @@ export interface SynthOptions {
   stackName: string;
   region?: string;
   account?: string;
+  /**
+   * Client-resolved values for the code-discovered `env("NAME")` keys
+   * (name -> value). Injected into every Lambda; never part of the IR.
+   */
+  runtimeEnv?: Record<string, string>;
 }
 
 export interface SynthResult {
@@ -24,6 +29,7 @@ export function synth(ir: InfraIR, handlers: BundledHandler[], opts: SynthOption
   new LaranjaStack(app, opts.stackName, {
     ir,
     handlers,
+    runtimeEnv: opts.runtimeEnv,
     // Leave env undefined for an environment-agnostic stack when no account is
     // known (lets us synth without credentials).
     env: opts.region || opts.account ? { account: opts.account, region: opts.region } : undefined,

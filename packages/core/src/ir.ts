@@ -114,6 +114,16 @@ export interface InfraIR {
   http?: HttpIR;
   crons: CronIR[];
   queues: QueueIR[];
-  /** Plain env injected into every Lambda. Secrets handling comes later. */
+  /**
+   * Static env from config, injected into every Lambda as literal name->value.
+   * Crosses the wire to the server as-is. Secrets handling comes later.
+   */
   env: Record<string, string>;
+  /**
+   * Env var NAMES discovered from `env("NAME")` calls in user code (names only,
+   * never values). The client resolves each from `process.env` at deploy time
+   * and injects it into every Lambda — so values stay on the developer's machine
+   * (and out of the IR, the wire, and the server). Sorted + de-duplicated.
+   */
+  envKeys: string[];
 }

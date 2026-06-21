@@ -8,7 +8,10 @@ import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
 
-export async function deploy(projectDir: string, opts: { verbose?: boolean; stage?: string } = {}): Promise<void> {
+export async function deploy(
+  projectDir: string,
+  opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
+): Promise<void> {
   const started = Date.now();
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
@@ -19,10 +22,23 @@ export async function deploy(projectDir: string, opts: { verbose?: boolean; stag
   const account = await getAccountId(region);
   ui.step("🔑", "account", account);
 
-  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, { region, account, stage: opts.stage });
+  const { ir, stackName, cdkOutDir, missingEnv } = await buildAssembly(projectDir, {
+    region,
+    account,
+    stage: opts.stage,
+  });
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
   ui.step("📦", "build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
+
+  // env("...") keys with no value locally/in CI. --strict fails before we deploy;
+  // otherwise we deploy and warn at the end (laranja speeds you up, not babysits).
+  if (missingEnv.length && opts.strict) {
+    throw new Error(
+      `Missing values for env declared in code: ${missingEnv.join(", ")}.\n` +
+        `  Set them in your shell / CI (repo secrets) and re-run, or drop --strict.`,
+    );
+  }
 
   const ioHost = new LaranjaIoHost(opts.verbose);
   const toolkit = new Toolkit({ ioHost });
@@ -65,6 +81,12 @@ export async function deploy(projectDir: string, opts: { verbose?: boolean; stag
       ui.step("⏰", "cron", ir.crons.map((c) => handlerLabel(c)).join(", "));
     }
     if (ir.queues.length) ui.step("📨", "queue", ir.queues.map((q) => q.name).join(", "));
+  }
+
+  if (missingEnv.length) {
+    console.log();
+    ui.warn(`deployed without values for: ${missingEnv.join(", ")}`);
+    ui.note("these env vars weren't set locally/in CI — set them and re-run deploy to populate them.");
   }
 
   console.log(`\n  ${ui.orange("✨ live")}  ${ui.dim(opts.verbose ? "" : "(run with --verbose for full CDK output)")}\n`);

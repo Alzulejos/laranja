@@ -104,6 +104,22 @@ export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
 
 export type DeploymentStatus = "succeeded" | "failed" | "destroyed";
 
+/**
+ * A non-fatal issue surfaced during a deploy, reported for dashboard statistics
+ * (e.g. "succeeded with 4 warnings"). Distinct from `status` — a deploy with
+ * warnings still `succeeded`; we don't invent a third status.
+ */
+export type DeploymentWarningCode = "missing_env_value";
+
+export interface DeploymentWarning {
+  code: DeploymentWarningCode;
+  /**
+   * Affected identifiers for context — e.g. the env var NAMES that had no value.
+   * NEVER values/secrets (the names already travel in the IR; values never do).
+   */
+  keys?: string[];
+}
+
 /** Kind of a deployed resource, for dashboard grouping/icons. ("function" = a plain compute fn — provider-neutral; was "lambda".) */
 export type DeployedResourceKind = "http" | "cron" | "queue" | "function";
 
@@ -136,6 +152,8 @@ export interface DeploymentReport {
   outputs?: Record<string, string>;
   /** Inventory of deployed resources (names/ARNs only — no secret values). */
   resources?: DeployedResource[];
+  /** Non-fatal issues surfaced during the deploy (e.g. unpopulated env vars). */
+  warnings?: DeploymentWarning[];
   /** Populated when `status` is "failed". */
   error?: string;
 }

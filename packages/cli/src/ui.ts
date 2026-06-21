@@ -24,6 +24,11 @@ export function note(text: string): void {
   console.log(`     ${dim(text)}`);
 }
 
+/** A non-fatal warning line — surfaced but doesn't stop the command. */
+export function warn(text: string): void {
+  console.log(`  ${orange("⚠")}  ${text}`);
+}
+
 export interface Spinner {
   /** Change the live spinner text. */
   update(text: string): void;

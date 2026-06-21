@@ -137,3 +137,22 @@ export function queue(options: QueueOptions, handler: JobHandler): void {
 export function http<T>(app: T): T {
   return app;
 }
+
+/**
+ * Declare an environment variable your code needs at runtime — code-first.
+ *
+ * At runtime this is nothing more than a read of `process.env[name]`. Its value
+ * to laranja is *static discovery*: the scanner finds every `env("NAME")` call
+ * (NAME must be a string literal) and records the name in the IR. The deploy
+ * step then resolves each name from your shell / CI `process.env` and populates
+ * the Lambda's environment for you — no more filling vars in the console.
+ *
+ * Only the NAME crosses the wire to the server; the VALUE is resolved on your
+ * machine at deploy time and never leaves it.
+ *
+ * @example
+ *   const dbUrl = env("DATABASE_URL");
+ */
+export function env(name: string): string | undefined {
+  return process.env[name];
+}

@@ -30,6 +30,8 @@ Flags:
   --stage, -s <name>  Deployment stage to target, e.g. dev/staging/prod
                       (overrides config; deploy/synth/diff/destroy/logs/eject)
   --verbose, -v       Show full CDK/CloudFormation output (deploy/destroy)
+  --strict            deploy: fail if any env("...") declared in code has no
+                      value set locally/in CI (default: deploy + warn)
   --remote            synth: synthesize on the laranja server instead of locally
   --all               logs: tail every function (multiplexed)
   --no-follow         logs: print recent history and exit (no live tail)
@@ -79,7 +81,7 @@ async function main(): Promise<void> {
       await synthCommand(projectDir, { remote: rest.includes("--remote"), stage });
       break;
     case "deploy":
-      await deploy(projectDir, { verbose, stage });
+      await deploy(projectDir, { verbose, stage, strict: rest.includes("--strict") });
       break;
     case "diff":
       await diff(projectDir, { stage });

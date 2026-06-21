@@ -18,6 +18,12 @@ import { renderAwsSchedule } from "./schedule-aws.js";
 export interface LaranjaStackProps extends StackProps {
   ir: InfraIR;
   handlers: BundledHandler[];
+  /**
+   * Values for the code-discovered `env("NAME")` keys, resolved on the client at
+   * deploy time (name -> value). Merged over `ir.env` into every Lambda. Kept
+   * separate from the IR so values never cross the wire (see Path 2 / envKeys).
+   */
+  runtimeEnv?: Record<string, string>;
 }
 
 /** Strip a logical id down to CloudFormation-safe alphanumerics. */
@@ -37,6 +43,8 @@ export class LaranjaStack extends Stack {
     super(scope, id, props);
     const { ir, handlers } = props;
     const byId = new Map(handlers.map((h) => [h.id, h]));
+    // Config statics, then client-resolved env("...") values (the latter win).
+    const lambdaEnv = { ...ir.env, ...(props.runtimeEnv ?? {}) };
 
     // Physical Lambda name: <app>-<label>-<stage>, e.g. "express-basic-app-dev".
     const fnName = (label: string): string =>
@@ -50,7 +58,7 @@ export class LaranjaStack extends Stack {
         runtime: Runtime.NODEJS_20_X,
         code: Code.fromAsset(h.assetDir),
         handler: h.handler,
-        environment: ir.env,
+        environment: lambdaEnv,
         timeout,
       });
     };

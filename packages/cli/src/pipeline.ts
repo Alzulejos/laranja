@@ -1,6 +1,6 @@
 import path from "node:path";
 import { rmSync } from "node:fs";
-import { loadConfig, stackName, type InfraIR } from "@laranja/core";
+import { loadConfig, resolveDeclaredEnv, stackName, type InfraIR } from "@laranja/core";
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, synth } from "@laranja/cdk";
@@ -11,6 +11,12 @@ export interface Assembly {
   /** Absolute path to the synthesized cloud assembly (cdk.out). */
   cdkOutDir: string;
   region?: string;
+  /**
+   * Code-discovered env keys (`env("NAME")`) with no value in `process.env` at
+   * build time. The Lambda is still synthesized without them — the caller decides
+   * whether to warn (default) or fail (`--strict`).
+   */
+  missingEnv: string[];
 }
 
 /**
@@ -31,6 +37,9 @@ export async function buildAssembly(
   const config = await loadConfig(projectDir, { stage: env?.stage });
   const name = stackName(config.name, config.stage);
   const ir = scan({ projectDir, config });
+  // Resolve the code-discovered env("...") keys from the local/CI environment.
+  // Values are injected into the Lambdas here and never enter the IR.
+  const { resolved, missing } = resolveDeclaredEnv(ir.envKeys);
   const entries = generateEntries(ir, { projectDir, entryDir });
   const handlers = await bundleEntries(entries, { entryDir, buildDir });
   synth(ir, handlers, {
@@ -38,9 +47,10 @@ export async function buildAssembly(
     stackName: name,
     region: env?.region ?? config.region,
     account: env?.account,
+    runtimeEnv: resolved,
   });
 
-  return { ir, stackName: name, cdkOutDir, region: env?.region ?? config.region };
+  return { ir, stackName: name, cdkOutDir, region: env?.region ?? config.region, missingEnv: missing };
 }
 
 export function printPlan(ir: InfraIR): void {

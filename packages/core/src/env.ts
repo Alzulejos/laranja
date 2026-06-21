@@ -33,3 +33,16 @@ export function resolveDeclaredEnv(
   }
   return { resolved, missing };
 }
+
+/**
+ * The CloudFormation Parameter logical id for an env key. Each code-discovered
+ * `env("NAME")` becomes a stack Parameter (so the value is supplied at deploy
+ * time, never baked into the template). Logical ids must be alphanumeric, so
+ * non-alphanumerics are stripped — this is the single source of truth shared by
+ * the stack (which declares the Parameter) and the deploy step (which supplies
+ * its value). Two keys that collide after stripping surface as a duplicate-id
+ * error at synth, which is the desired loud failure.
+ */
+export function envParamName(key: string): string {
+  return `Env${key.replace(/[^A-Za-z0-9]/g, "")}`;
+}

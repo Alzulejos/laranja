@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
-import { Toolkit, StackSelectionStrategy, BootstrapEnvironments } from "@aws-cdk/toolkit-lib";
-import { handlerLabel, loadConfig } from "@laranja/core";
+import { Toolkit, StackSelectionStrategy, StackParameters, BootstrapEnvironments } from "@aws-cdk/toolkit-lib";
+import { envParamName, handlerLabel, loadConfig, resolveDeclaredEnv } from "@laranja/core";
 import { buildAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
@@ -22,7 +22,7 @@ export async function deploy(
   const account = await getAccountId(region);
   ui.step("🔑", "account", account);
 
-  const { ir, stackName, cdkOutDir, missingEnv } = await buildAssembly(projectDir, {
+  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, {
     region,
     account,
     stage: opts.stage,
@@ -31,11 +31,20 @@ export async function deploy(
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
   ui.step("📦", "build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
 
-  // env("...") keys with no value locally/in CI. --strict fails before we deploy;
-  // otherwise we deploy and warn at the end (laranja speeds you up, not babysits).
-  if (missingEnv.length && opts.strict) {
+  // Resolve the code-discovered env("...") keys from this machine's process.env.
+  // Values are passed to CloudFormation as stack Parameters at deploy time (never
+  // baked into the template / IR). Unset keys are left unspecified, so on an
+  // update CloudFormation keeps the previous value (UsePreviousValue) and on a
+  // first deploy the Parameter default ("") applies.
+  const { resolved, missing } = resolveDeclaredEnv(ir.envKeys);
+  const envParams: Record<string, string> = {};
+  for (const [key, value] of Object.entries(resolved)) envParams[envParamName(key)] = value;
+
+  // --strict fails before we deploy; otherwise we deploy and warn at the end
+  // (laranja speeds you up, it doesn't babysit).
+  if (missing.length && opts.strict) {
     throw new Error(
-      `Missing values for env declared in code: ${missingEnv.join(", ")}.\n` +
+      `Missing values for env declared in code: ${missing.join(", ")}.\n` +
         `  Set them in your shell / CI (repo secrets) and re-run, or drop --strict.`,
     );
   }
@@ -65,7 +74,12 @@ export async function deploy(
   ioHost.onActivity = opts.verbose ? undefined : makeActivityHandler(sp);
   try {
     const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
-    await toolkit.deploy(cx, { stacks: { strategy: StackSelectionStrategy.ALL_STACKS }, outputsFile });
+    await toolkit.deploy(cx, {
+      stacks: { strategy: StackSelectionStrategy.ALL_STACKS },
+      // Supply env values; unspecified keys keep their previous value on update.
+      parameters: StackParameters.withExisting(envParams),
+      outputsFile,
+    });
     sp.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     sp.fail("deploy failed");
@@ -83,9 +97,9 @@ export async function deploy(
     if (ir.queues.length) ui.step("📨", "queue", ir.queues.map((q) => q.name).join(", "));
   }
 
-  if (missingEnv.length) {
+  if (missing.length) {
     console.log();
-    ui.warn(`deployed without values for: ${missingEnv.join(", ")}`);
+    ui.warn(`deployed without values for: ${missing.join(", ")}`);
     ui.note("these env vars weren't set locally/in CI — set them and re-run deploy to populate them.");
   }
 

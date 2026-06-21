@@ -1,4 +1,4 @@
-import { CfnOutput, Duration, Stack, type StackProps } from "aws-cdk-lib";
+import { CfnOutput, CfnParameter, Duration, Stack, type StackProps } from "aws-cdk-lib";
 import {
   Code,
   Function as LambdaFunction,
@@ -11,19 +11,13 @@ import { LambdaFunction as LambdaTarget } from "aws-cdk-lib/aws-events-targets";
 import { Queue, QueueEncryption } from "aws-cdk-lib/aws-sqs";
 import { SqsEventSource } from "aws-cdk-lib/aws-lambda-event-sources";
 import type { Construct } from "constructs";
-import { handlerLabel, handlerName, type InfraIR } from "@laranja/core";
+import { envParamName, handlerLabel, handlerName, type InfraIR } from "@laranja/core";
 import type { BundledHandler } from "./bundle.js";
 import { renderAwsSchedule } from "./schedule-aws.js";
 
 export interface LaranjaStackProps extends StackProps {
   ir: InfraIR;
   handlers: BundledHandler[];
-  /**
-   * Values for the code-discovered `env("NAME")` keys, resolved on the client at
-   * deploy time (name -> value). Merged over `ir.env` into every Lambda. Kept
-   * separate from the IR so values never cross the wire (see Path 2 / envKeys).
-   */
-  runtimeEnv?: Record<string, string>;
 }
 
 /** Strip a logical id down to CloudFormation-safe alphanumerics. */
@@ -43,8 +37,23 @@ export class LaranjaStack extends Stack {
     super(scope, id, props);
     const { ir, handlers } = props;
     const byId = new Map(handlers.map((h) => [h.id, h]));
-    // Config statics, then client-resolved env("...") values (the latter win).
-    const lambdaEnv = { ...ir.env, ...(props.runtimeEnv ?? {}) };
+
+    // Code-discovered env("NAME") keys become CloudFormation Parameters: the
+    // value is supplied at deploy time (from the client's process.env) and never
+    // baked into the template. `default: ""` lets a first deploy succeed even if
+    // a value is unset (the client warns); on later deploys an unspecified value
+    // keeps the previous one (UsePreviousValue). noEcho keeps values out of the
+    // console/events. Config statics (ir.env) are still inlined as literals.
+    const lambdaEnv: Record<string, string> = { ...ir.env };
+    for (const key of ir.envKeys) {
+      const param = new CfnParameter(this, envParamName(key), {
+        type: "String",
+        default: "",
+        noEcho: true,
+        description: `Value for env("${key}") — supplied at deploy time.`,
+      });
+      lambdaEnv[key] = param.valueAsString;
+    }
 
     // Physical Lambda name: <app>-<label>-<stage>, e.g. "express-basic-app-dev".
     const fnName = (label: string): string =>

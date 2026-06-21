@@ -79,9 +79,8 @@ consumer — all in your own account, named deterministically.
   into your account. You own every resource and can inspect it in the console.
 - **Deterministic, no magic names.** Resources are named `‹app›-‹fn›-‹stage›` —
   predictable and greppable, with no random suffixes.
-- **Provider-neutral core.** Internally, your app is reduced to a cloud-agnostic
-  description (the [IR](./concepts/how-it-works.md)). AWS is the first target;
-  the model is built so others can follow without touching your app code.
+- **Provider-neutral by design.** AWS is the first target, but laranja is built
+  so other clouds can follow without changing your app code.
 - **An escape hatch when you need it.** Outgrow the abstraction? `laranja eject`
   hands you a real, owned CDK project (see [eject](./cli/commands.md#eject)).
 

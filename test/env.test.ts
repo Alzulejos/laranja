@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { resolveDeclaredEnv } from "@laranja/core";
+import { resolveDeclaredEnv, envParamName } from "@laranja/core";
 
 describe("resolveDeclaredEnv", () => {
   test("splits declared keys into resolved values and missing names", () => {
@@ -13,5 +13,12 @@ describe("resolveDeclaredEnv", () => {
 
   test("no declared keys -> nothing resolved, nothing missing", () => {
     expect(resolveDeclaredEnv([], { ANYTHING: "1" })).toEqual({ resolved: {}, missing: [] });
+  });
+});
+
+describe("envParamName", () => {
+  test("produces an alphanumeric CloudFormation Parameter logical id", () => {
+    expect(envParamName("DATABASE_URL")).toBe("EnvDATABASEURL");
+    expect(envParamName("stripe.key-1")).toBe("Envstripekey1");
   });
 });

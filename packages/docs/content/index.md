@@ -24,7 +24,7 @@ npx laranja deploy
 
 ## Concepts
 
-- **[How it works](./concepts/how-it-works.md)** — the scan → IR → synth → deploy pipeline.
+- **[How it works](./concepts/how-it-works.md)** — how your code becomes a running app on AWS.
 - **[What gets deployed](./concepts/what-gets-deployed.md)** — the AWS resources and how they're named.
 - **[Stages & environments](./concepts/stages-and-environments.md)** — dev / staging / prod with one codebase.
 
@@ -43,7 +43,7 @@ npx laranja deploy
 ## Reference
 
 - **[CLI commands](./cli/commands.md)** — `init`, `synth`, `deploy`, `diff`, `destroy`, `logs`, `eject`.
-- **[Decorators & markers](./reference/decorators-and-markers.md)** — `@Cron`, `@Queue`, `cron`, `queue`, `http`.
+- **[Decorators & markers](./reference/decorators-and-markers.md)** — `@Cron`, `@Queue`, `cron`, `queue`, `http`, `env`.
 
 > **Status:** v1 targets **AWS** with **Express** today; **NestJS support is
 > coming**. The internal model is provider- and framework-neutral, so new clouds

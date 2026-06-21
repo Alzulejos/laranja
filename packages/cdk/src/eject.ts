@@ -72,7 +72,16 @@ export function generateEjectProject(ir: InfraIR, opts: EjectOptions): EjectedFi
   lines.push(`import type { Construct } from "constructs";`);
   lines.push("");
   lines.push(`const __dirname = path.dirname(fileURLToPath(import.meta.url));`);
-  lines.push(`const ENV: Record<string, string> = ${JSON.stringify(ir.env)};`);
+  // Config statics are inlined; code-discovered env("...") keys are read from
+  // the environment at `cdk deploy` time (you own this project now).
+  if (ir.envKeys.length) {
+    lines.push(`const ENV: Record<string, string> = {`);
+    lines.push(`  ...${JSON.stringify(ir.env)},`);
+    lines.push(`  ...Object.fromEntries(${JSON.stringify(ir.envKeys)}.map((k) => [k, process.env[k] ?? ""])),`);
+    lines.push(`};`);
+  } else {
+    lines.push(`const ENV: Record<string, string> = ${JSON.stringify(ir.env)};`);
+  }
   lines.push(`const APP = ${JSON.stringify(ir.app.name)};`);
   lines.push(`const STAGE = ${JSON.stringify(ir.app.stage)};`);
   lines.push("// Physical Lambda name: <app>-<label>-<stage>");

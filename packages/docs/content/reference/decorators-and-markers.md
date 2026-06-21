@@ -147,6 +147,29 @@ a [workers-only](../guides/http-apps.md#workers-only-deployments) deployment.
 
 ---
 
+## `env()`
+
+Declares an environment variable your code needs. At runtime it just returns
+`process.env[name]`; laranja discovers each call and populates that variable on
+every deployed function, with the value supplied from your shell or CI at deploy
+time.
+
+```ts
+function env(name: string): string | undefined
+```
+
+```ts
+import { env } from "@laranja/decorators";
+
+const dbUrl = env("DATABASE_URL");
+```
+
+The name must be a **string literal** so it can be found statically. See
+[environment variables](../configuration/environment-variables.md#values-from-your-environment--env)
+for supplying values, the `--strict` flag, and per-stage usage.
+
+---
+
 ## Types
 
 | Type | Description |

@@ -32,7 +32,7 @@ $ laranja deploy
 ## Why laranja?
 
 - **Code is the source of truth.** Your decorators *are* the infra spec — no drift between app and config.
-- **Static, safe analysis.** laranja reads your code with the TypeScript compiler; it never executes it to discover routes/jobs.
+- **Safe by default.** laranja reads your code to discover infra — it never runs it.
 - **Your account, your data.** Deploys go straight into your AWS account using your own credentials. laranja hosts nothing.
 - **No CDK/CLI to install.** The AWS CDK toolkit is embedded — you don't install or learn it.
 - **Eject anytime.** Outgrow the magic? Generate a fully-owned CDK project you control.
@@ -126,6 +126,28 @@ That's it. You'll get a live HTTPS URL, scheduled jobs, and queues.
 
 ---
 
+## Environment variables
+
+Put commit-safe config in the `env` map. For values that should come from your
+shell or CI, wrap them with `env()` — laranja finds them and populates every
+function at deploy time, so you never fill them in by hand in the console:
+
+```ts
+import { env } from "@laranja/decorators";
+
+const dbUrl = env("DATABASE_URL"); // process.env.DATABASE_URL at runtime
+```
+
+```bash
+DATABASE_URL=postgres://… laranja deploy --stage prod
+```
+
+The name must be a string literal. Missing a value? laranja deploys and warns
+(use `--strict` to fail instead). See the
+[env vars guide](packages/docs/content/configuration/environment-variables.md) for details.
+
+---
+
 ## Decorators
 
 ### `@Cron` — scheduled jobs
@@ -170,6 +192,7 @@ laranja eject      # generate an owned CDK project (Pro)
 # flags
   --stage, -s <name>  # target a stage (dev/staging/prod); overrides config
   --verbose, -v       # stream full CDK/CloudFormation output
+  --strict            # deploy: fail if any env() value is unset (default: warn)
   --all               # logs: tail every function (multiplexed)
   --no-follow         # logs: print recent history and exit
   --since <dur>       # logs: history look-back, e.g. 30s, 15m, 1h, 2d
@@ -210,15 +233,12 @@ Stages can live in one AWS account (distinct stacks) or in separate accounts
 
 ## How it works
 
-```
-your code ──▶ scan (ts-morph) ──▶ Infra IR ──▶ bundle (esbuild) ──▶ CDK ──▶ your AWS account
-            decorators + routes    (JSON)        per-λ assets      toolkit-lib
-```
-
-1. **Scan** — the TypeScript AST is read to find your app, routes, `@Cron`, and `@Queue` (no code execution).
-2. **IR** — a small JSON description of your infrastructure (the stable boundary).
-3. **Bundle** — each handler is bundled into its own tiny Lambda artifact.
-4. **Deploy** — an embedded CDK toolkit synthesizes and deploys to CloudFormation in your account.
+1. **It reads your code — it never runs it.** laranja finds your app, routes,
+   `@Cron`/`@Queue` jobs, and the env vars you wrap with `env()` by reading your
+   source, so planning a deploy is always safe.
+2. **It deploys into your AWS account.** What it found becomes Lambdas, schedules,
+   and queues, deployed with your own credentials. The CDK toolkit is embedded —
+   nothing extra to install.
 
 ## Custom domains
 
@@ -245,7 +265,7 @@ cd infra && npm install && npm run deploy
 
 ```bash
 npm install
-npm run scan:express      # see the Infra IR for the example
+npm run scan:express      # show what laranja found in the example
 npm run synth:express     # see the planned resources
 npm run deploy:express    # deploy the example (needs AWS creds)
 npm run destroy:express

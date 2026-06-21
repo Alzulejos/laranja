@@ -1,75 +1,43 @@
 ---
 title: How it works
-description: The scan → IR → synth → deploy pipeline, end to end.
+description: How laranja turns your code into a running app on AWS.
 order: 1
 ---
 
 # How it works
 
-laranja turns your application code into deployed infrastructure in four stages:
+You write your app; laranja deploys it to your own AWS account. Two things are
+worth knowing about how it does that.
 
-```
-  your code  →  scan  →  IR  →  synth  →  deploy
-              (read)  (plan)  (template)  (apply)
-```
+## It reads your code — it never runs it
 
-## 1. Scan
+laranja discovers your infrastructure by **reading** your source: your HTTP app
+and its routes, your `@Cron` / `cron()` jobs and their schedules, your
+`@Queue` / `queue()` consumers, and the env vars you wrap with `env()`. It does
+this without executing your code, so planning a deploy is always safe — nothing
+of yours runs just to figure out what to deploy.
 
-A **static scanner** (built on `ts-morph`) reads your source without executing
-it. It finds:
+That's also why a few things must be written so laranja can see them: schedules
+use literal builders like `rate(5, "minutes")`, and `env("…")` takes a string
+literal.
 
-- the **HTTP app** (from `entry`/`appExport` or the [`http()`](../reference/decorators-and-markers.md#http) marker) and its routes,
-- every [`@Cron`](../reference/decorators-and-markers.md#cron) / [`cron()`](../reference/decorators-and-markers.md#cron-marker) handler and its schedule,
-- every [`@Queue`](../reference/decorators-and-markers.md#queue) / [`queue()`](../reference/decorators-and-markers.md#queue-marker) handler and its options.
+## It deploys into your AWS account
 
-Because it's static, schedule builders like `rate(5, "minutes")` are
-constant-folded at scan time — your code is never run to discover infrastructure.
+laranja turns what it found into AWS resources — a Lambda for your app, an
+EventBridge rule per cron, an SQS queue per consumer — and deploys them with
+**your** credentials into **your** account. See
+[what gets deployed](./what-gets-deployed.md) for the full mapping.
 
-## 2. The IR (Infra IR)
-
-The scan produces an **Infra IR** — a small, serializable, provider-neutral
-description of what your app needs: "one HTTP app with N routes, these crons on
-these schedules, these queues." It contains _structure only_ — names, routes,
-schedules, env keys — never your source code.
-
-The IR is the seam that makes everything else possible:
-
-- It's **provider-neutral**, so the same description can target different clouds.
-- It's the **only thing that needs to cross a network boundary** when synth runs
-  on a server (see below).
-
-## 3. Synth
-
-The IR is **synthesized** into a concrete deployment artifact — a CloudFormation
-template (via the AWS CDK under the hood). This is where the abstract "one cron
-on a 5-minute schedule" becomes a Lambda function, an IAM role, and an
-EventBridge rule. See [what gets deployed](./what-gets-deployed.md) for the
-full mapping.
-
-Two synth modes exist:
-
-- **Local** — the default; everything happens on your machine.
-- **Server-side** ([`synth --remote`](../cli/commands.md#synth)) — your machine
-  builds the code and sends only the IR to the laranja server, which returns the
-  template. Your source code and built artifacts never leave your machine.
-
-## 4. Deploy
-
-Your built code is bundled into Lambda packages, and the template is applied to
-**your own AWS account** using your credentials. laranja embeds the AWS CDK
-toolkit, so there's nothing else to install.
-
+- The AWS CDK toolkit is embedded, so there's nothing extra to install.
 - The first deploy to a new account/region runs a one-time **bootstrap**.
-- Outputs (your HTTPS URL, queue URLs) are surfaced when the deploy finishes.
-- [`diff`](../cli/commands.md#diff) shows what a deploy would change before you
-  run it; [`destroy`](../cli/commands.md#destroy) tears the stack down.
+- [`diff`](../cli/commands.md#diff) previews changes before you apply them;
+  [`destroy`](../cli/commands.md#destroy) tears the stack down.
+- Outputs (your HTTPS URL, queue URLs) are printed when the deploy finishes.
 
-## Why this shape
-
-Reducing the app to an IR — and keeping synth logic behind a clean boundary —
-means the front half (reading your code) is fully decoupled from the back half
-(generating infrastructure). That's what lets laranja add new clouds or move
-synth server-side without changing how you write your app.
+Prefer to keep the heavy lifting off your machine?
+[`synth --remote`](../cli/commands.md#synth) builds your code locally and sends
+only a description of your infrastructure to the laranja server — your source
+code and bundles never leave your machine.
 
 ## Related
 

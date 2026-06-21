@@ -19,6 +19,7 @@ laranja <command> [project-dir] [flags]
 |---|---|---|
 | `--stage`, `-s <name>` | deploy, synth, diff, destroy, logs, eject | Target [stage](../concepts/stages-and-environments.md); overrides `config.stage`. |
 | `--verbose`, `-v` | deploy, destroy | Stream full CDK/CloudFormation output instead of the compact UI. |
+| `--strict` | deploy | Fail if any [`env()`](../configuration/environment-variables.md#values-from-your-environment--env) value is unset (default: warn). |
 
 ---
 
@@ -51,7 +52,7 @@ generated template under `.laranja/`.
 
 | Flag | Description |
 |---|---|
-| `--remote` | Synthesize on the laranja server instead of locally. Only the [IR](../concepts/how-it-works.md#2-the-ir-infra-ir) is sent — your source code never leaves your machine. Requires `LARANJA_API_KEY` and a `projectId`. |
+| `--remote` | Synthesize on the laranja server instead of locally. Only a description of your infrastructure is sent — your source code never leaves your machine. Requires `LARANJA_API_KEY` and a `projectId`. |
 | `--stage`, `-s` | Target stage. |
 
 ---
@@ -75,6 +76,7 @@ laranja deploy --verbose
 |---|---|
 | `--stage`, `-s` | Target stage. |
 | `--verbose`, `-v` | Stream full CDK output. |
+| `--strict` | Fail the deploy if any [`env()`](../configuration/environment-variables.md#values-from-your-environment--env) value is unset. By default these are deployed with a warning. |
 
 ---
 

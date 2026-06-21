@@ -8,6 +8,8 @@ import {
   ApiRequestError,
 } from "@laranja/core";
 import { scan } from "@laranja/scanner";
+import { generateEntries } from "@laranja/runtime";
+import { bundleEntries, computeAssetHashes } from "@laranja/cdk";
 import { buildAssembly, printPlan } from "../pipeline.js";
 
 /** Build + synth only (no AWS calls). Useful for inspecting what would deploy. */
@@ -51,10 +53,21 @@ async function synthRemote(projectDir: string, stage?: string): Promise<void> {
   console.log(`Synthesizing "${ir.app.name}" on the server (${resolveApiUrl()})…`);
   printPlan(ir);
 
+  // Bundle each handler locally and fingerprint it with CDK's own asset hash, so
+  // the server's template references the exact `<hash>.zip` the toolkit will
+  // upload at deploy time. The source code never leaves the machine — only hashes.
+  const outRoot = path.join(projectDir, ".laranja");
+  const entries = generateEntries(ir, { projectDir, entryDir: path.join(outRoot, "entries") });
+  const handlers = await bundleEntries(entries, {
+    entryDir: path.join(outRoot, "entries"),
+    buildDir: path.join(outRoot, "build"),
+  });
+  const assets = computeAssetHashes(handlers);
+
   let res;
   try {
     res = await postSynth(
-      { project: ir.app.name, stage: ir.app.stage, artifact: "cloudformation", ir },
+      { project: ir.app.name, stage: ir.app.stage, artifact: "cloudformation", ir, assets },
       apiKey,
       config.projectId,
     );

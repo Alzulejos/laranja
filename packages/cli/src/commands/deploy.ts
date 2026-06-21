@@ -1,8 +1,8 @@
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { Toolkit, StackSelectionStrategy, StackParameters, BootstrapEnvironments } from "@aws-cdk/toolkit-lib";
-import { envParamName, handlerLabel, loadConfig, resolveDeclaredEnv } from "@laranja/core";
-import { buildAssembly } from "../pipeline.js";
+import { envParamName, handlerLabel, loadConfig, resolveApiKey, resolveDeclaredEnv } from "@laranja/core";
+import { buildAssembly, buildRemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
@@ -10,26 +10,35 @@ import * as ui from "../ui.js";
 
 export async function deploy(
   projectDir: string,
-  opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
+  opts: { verbose?: boolean; stage?: string; strict?: boolean; remote?: boolean } = {},
 ): Promise<void> {
   const started = Date.now();
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
+  // For a server-side build we need the API key before touching AWS, so fail fast.
+  const apiKey = opts.remote ? resolveApiKey() : undefined;
+  if (opts.remote && !apiKey) {
+    throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy via the server.");
+  }
+
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 
   const account = await getAccountId(region);
   ui.step("🔑", "account", account);
 
-  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, {
-    region,
-    account,
-    stage: opts.stage,
-  });
+  // Local build (synth on this machine) or server build (synth on the laranja
+  // server; we only bundle + fingerprint locally). Both yield a cloud assembly
+  // the toolkit deploys with the user's own AWS credentials.
+  const built = opts.remote
+    ? await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey!)
+    : await buildAssembly(projectDir, { region, account, stage: opts.stage });
+  const { ir, stackName, cdkOutDir } = built;
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
-  ui.step("📦", "build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
+  const where = opts.remote ? "server build" : "build";
+  ui.step("📦", where, `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
 
   // Resolve the code-discovered env("...") keys from this machine's process.env.
   // Values are passed to CloudFormation as stack Parameters at deploy time (never

@@ -32,7 +32,8 @@ Flags:
   --verbose, -v       Show full CDK/CloudFormation output (deploy/destroy)
   --strict            deploy: fail if any env("...") declared in code has no
                       value set locally/in CI (default: deploy + warn)
-  --remote            synth: synthesize on the laranja server instead of locally
+  --remote            synth/deploy: build on the laranja server instead of
+                      locally (deploy still applies with YOUR AWS credentials)
   --all               logs: tail every function (multiplexed)
   --no-follow         logs: print recent history and exit (no live tail)
   --since <dur>       logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
@@ -81,7 +82,12 @@ async function main(): Promise<void> {
       await synthCommand(projectDir, { remote: rest.includes("--remote"), stage });
       break;
     case "deploy":
-      await deploy(projectDir, { verbose, stage, strict: rest.includes("--strict") });
+      await deploy(projectDir, {
+        verbose,
+        stage,
+        strict: rest.includes("--strict"),
+        remote: rest.includes("--remote"),
+      });
       break;
     case "diff":
       await diff(projectDir, { stage });

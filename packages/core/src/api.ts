@@ -57,6 +57,31 @@ export interface MeResponse {
 /** The artifact the client wants from `/synth`. `cdk` requires a paid tier. */
 export type SynthArtifact = "cloudformation" | "cdk";
 
+/**
+ * Per-handler content hash of the client-built zip, keyed by handler id
+ * ("http" | cron.id | queue.id). The hash is CDK's own `Asset.assetHash`
+ * (a SOURCE fingerprint), computed client-side at bundle time. The server
+ * embeds it into the template as the bootstrap-bucket object key (`<hash>.zip`)
+ * so the Lambda code reference lines up with where the client's toolkit later
+ * uploads the matching zip. Only the hash crosses the wire — never the code.
+ */
+export type HandlerAssetHashes = Record<string, string>;
+
+/**
+ * What `/synth` reports back per handler so the client can publish its zip to
+ * the exact key the template references.
+ */
+export interface HandlerAsset {
+  /** Handler id — matches the client's bundled-zip id ("http" | cron.id | queue.id). */
+  id: string;
+  /** Short label (e.g. "app", or the cron/queue method name). */
+  label: string;
+  /** Content hash supplied for this handler. */
+  hash: string;
+  /** S3 object key the template references (in the bootstrap assets bucket). */
+  s3Key: string;
+}
+
 /** `POST /v1/synth` body. */
 export interface SynthRequest {
   /** Project name/slug — scopes deployments + limit accounting on the server. */
@@ -67,6 +92,8 @@ export interface SynthRequest {
   artifact: SynthArtifact;
   /** The Infra IR — structure only (routes, crons, queues, env, names). */
   ir: InfraIR;
+  /** Content hash per handler id, so the template's S3 keys match the client's uploads. */
+  assets: HandlerAssetHashes;
 }
 
 /** A single generated file (used by the `cdk` artifact). */
@@ -87,6 +114,8 @@ export interface CloudFormationSynthResponse extends SynthResponseBase {
   stackName: string;
   /** CloudFormation template as JSON. */
   template: Record<string, unknown>;
+  /** Per-handler asset map (hash → S3 key) the client uploads its zips against. */
+  assets: HandlerAsset[];
 }
 
 /** Paid only: a standalone, editable CDK project (server-side eject). */

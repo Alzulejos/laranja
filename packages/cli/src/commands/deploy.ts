@@ -14,6 +14,7 @@ import { buildRemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
+import { step, note } from "../diagnostics.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
@@ -23,8 +24,10 @@ export async function deploy(
   opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
 ): Promise<void> {
   const started = Date.now();
+  step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
+  note({ project: config.name, stage: config.stage, region });
   applyAwsEnv({ region, profile: config.profile });
 
   // Synth always happens on the laranja server; we need the API key before
@@ -36,13 +39,17 @@ export async function deploy(
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 
+  step("resolve account");
   const account = await getAccountId(region);
+  note({ account });
   ui.step("🔑", "account", account);
 
   // The server synthesizes the template (from the IR + asset hashes we send); we
   // only bundle + fingerprint locally, then deploy with the user's own AWS creds.
+  step("server build (scan/bundle/synth)");
   const built = await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey);
   const { ir, stackName, cdkOutDir, deploymentId } = built;
+  note({ deploymentId, stackName });
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
   ui.step("📦", "server build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
@@ -72,7 +79,9 @@ export async function deploy(
   const ioHost = new LaranjaIoHost(opts.verbose);
   const toolkit = new Toolkit({ ioHost });
 
+  step("bootstrap check");
   if (!(await isBootstrapped(region))) {
+    step("bootstrap");
     ui.step("🥾", "bootstrap", "first deploy to this account/region");
     ui.note("creates a one-time S3 asset bucket + IAM roles in YOUR account");
     if (!(await confirm("     proceed? (y/N)"))) {
@@ -89,6 +98,7 @@ export async function deploy(
     }
   }
 
+  step("deploy to AWS");
   const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
 
   const outputsFile = path.join(projectDir, ".laranja", "outputs.json");
@@ -122,6 +132,7 @@ export async function deploy(
 
   // Report the outcome + deployed inventory to the dashboard (success only POSTs
   // resources, per the lifecycle contract).
+  step("report success");
   const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
   await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey));
   await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey));

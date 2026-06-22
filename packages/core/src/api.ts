@@ -42,6 +42,8 @@ export const ENDPOINTS = {
   diff: `${API_PREFIX}/diff`,
   /** POST — generate a standalone, owned CDK project (paid; server-gated). */
   eject: `${API_PREFIX}/eject`,
+  /** POST — a CLI failure report (free-form), scoped to the user + project. */
+  report: `${API_PREFIX}/report`,
 } as const;
 
 /* -------------------------------------------------------------------------- */

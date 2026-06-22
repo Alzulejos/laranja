@@ -11,6 +11,7 @@ import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@laranja/cdk";
 import { writeResourceTypes } from "./resource-types.js";
+import { step } from "./diagnostics.js";
 
 export interface Assembly {
   ir: InfraIR;
@@ -50,8 +51,10 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   if (!config.projectId) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to use the laranja server.');
   }
+  step("scan project");
   const ir = scan({ projectDir, config });
   writeResourceTypes(projectDir, ir);
+  step("bundle handlers");
   const entries = generateEntries(ir, { projectDir, entryDir });
   const handlers = await bundleEntries(entries, { entryDir, buildDir });
   const assets = computeAssetHashes(handlers);
@@ -70,6 +73,7 @@ export async function buildRemoteAssembly(
 ): Promise<RemoteAssembly> {
   const { projectId, ir, handlers, assets, cdkOutDir, region } = await prepareUpload(projectDir, env);
 
+  step("server synth");
   let res;
   try {
     res = await postSynth(
@@ -85,6 +89,7 @@ export async function buildRemoteAssembly(
     throw new Error("Server returned a CDK project; expected a CloudFormation template to deploy.");
   }
 
+  step("assemble template");
   assembleFromTemplate({
     outdir: cdkOutDir,
     stackName: res.stackName,

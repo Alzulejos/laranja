@@ -9,6 +9,7 @@ import { diff } from "./commands/diff.js";
 import { destroy } from "./commands/destroy.js";
 import { eject } from "./commands/eject.js";
 import { logs } from "./commands/logs.js";
+import { beginRun, buildFailureReport, writeFailureReport, sendFailureReport } from "./diagnostics.js";
 import * as ui from "./ui.js";
 
 const HELP = `laranja — code-first deploy for Node apps
@@ -69,6 +70,8 @@ async function main(): Promise<void> {
   const projectDir = path.resolve(positionals[0] ?? ".");
   const verbose = rest.includes("--verbose") || rest.includes("-v");
 
+  beginRun(command ?? "(none)", projectDir);
+
   switch (command) {
     case "init":
       await init(projectDir);
@@ -126,9 +129,14 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((err) => {
-  const message = err instanceof Error ? err.message : String(err);
-  console.error(`\n  ${ui.red(`❌ ${message}`)}\n`);
+main().catch(async (err) => {
+  const report = buildFailureReport(err);
+  const logPath = writeFailureReport(report);
+  const sent = await sendFailureReport(report);
+  console.error(`\n  ${ui.red(`❌ ${report.reason}`)}`);
+  console.error(`  ${ui.dim(`failed at step: ${report.step}`)}`);
+  if (logPath) console.error(`  ${ui.dim(`report logged to ${logPath}`)}`);
+  if (sent) console.error(`  ${ui.dim("report sent to dashboard")}`);
   console.error(`  ${ui.dim("re-run with --verbose for full output")}\n`);
   process.exitCode = 1;
 });

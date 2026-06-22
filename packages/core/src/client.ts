@@ -149,6 +149,19 @@ export function postEject(
 }
 
 /**
+ * `POST /v1/report` — send a free-form CLI failure report, scoped to the user
+ * (api key) + project (project id). Diagnostics only; the body shape is open.
+ */
+export function postReport(
+  report: Record<string, unknown>,
+  apiKey: string,
+  projectId: string,
+  baseUrl?: string,
+): Promise<unknown> {
+  return apiRequest<unknown>("POST", ENDPOINTS.report, { apiKey, projectId, baseUrl, body: report });
+}
+
+/**
  * `PATCH /v1/deployment/:id` — advance a deployment's status. Sent with
  * `{ status: "STARTED", region }` before touching AWS, then `{ status: "SUCCESS"
  * | "FAILED" }` once the deploy settles. The server resolves the project from

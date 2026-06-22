@@ -10,7 +10,7 @@ import {
   resolveApiKey,
   resolveDeclaredEnv,
 } from "@laranja/core";
-import { buildAssembly, buildRemoteAssembly, type RemoteAssembly } from "../pipeline.js";
+import { buildRemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
@@ -20,17 +20,18 @@ import * as ui from "../ui.js";
 
 export async function deploy(
   projectDir: string,
-  opts: { verbose?: boolean; stage?: string; strict?: boolean; remote?: boolean } = {},
+  opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
 ): Promise<void> {
   const started = Date.now();
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 
-  // For a server-side build we need the API key before touching AWS, so fail fast.
-  const apiKey = opts.remote ? resolveApiKey() : undefined;
-  if (opts.remote && !apiKey) {
-    throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy via the server.");
+  // Synth always happens on the laranja server; we need the API key before
+  // touching AWS, so fail fast.
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy.");
   }
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
@@ -38,25 +39,17 @@ export async function deploy(
   const account = await getAccountId(region);
   ui.step("🔑", "account", account);
 
-  // Local build (synth on this machine) or server build (synth on the laranja
-  // server; we only bundle + fingerprint locally). Both yield a cloud assembly
-  // the toolkit deploys with the user's own AWS credentials.
-  const built = opts.remote
-    ? await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey!)
-    : await buildAssembly(projectDir, { region, account, stage: opts.stage });
-  const { ir, stackName, cdkOutDir } = built;
+  // The server synthesizes the template (from the IR + asset hashes we send); we
+  // only bundle + fingerprint locally, then deploy with the user's own AWS creds.
+  const built = await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey);
+  const { ir, stackName, cdkOutDir, deploymentId } = built;
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
-  const where = opts.remote ? "server build" : "build";
-  ui.step("📦", where, `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
+  ui.step("📦", "server build", `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
 
-  // A server build opened a deployment row at /synth; we report its lifecycle to
-  // the dashboard (STARTED before AWS → SUCCESS/FAILED after). Local builds have
-  // no dashboard deployment, so they skip reporting entirely.
-  const deploymentId = opts.remote ? (built as RemoteAssembly).deploymentId : undefined;
-  if (deploymentId) {
-    await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey!));
-  }
+  // /synth opened the deployment row; report its lifecycle to the dashboard
+  // (STARTED before AWS → SUCCESS/FAILED after).
+  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey));
 
   // Resolve the code-discovered env("...") keys from this machine's process.env.
   // Values are passed to CloudFormation as stack Parameters at deploy time (never
@@ -111,9 +104,7 @@ export async function deploy(
     sp.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     sp.fail("deploy failed");
-    if (deploymentId) {
-      await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey!));
-    }
+    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey));
     throw err;
   }
 
@@ -131,12 +122,10 @@ export async function deploy(
 
   // Report the outcome + deployed inventory to the dashboard (success only POSTs
   // resources, per the lifecycle contract).
-  if (deploymentId) {
-    const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
-    await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey!));
-    await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey!));
-    ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
-  }
+  const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
+  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey));
+  await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey));
+  ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
 
   if (missing.length) {
     console.log();

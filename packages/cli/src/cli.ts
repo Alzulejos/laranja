@@ -19,7 +19,7 @@ Usage:
 Commands:
   init       Scaffold a laranja.config.ts (prompts for + stores your API key)
   logout     Remove the stored API key (~/.laranja/auth.json)
-  synth      Build + show the planned AWS resources (no AWS calls)
+  synth      Synthesize the template on the laranja server (no AWS calls)
   deploy     Deploy into your AWS account (uses local credentials)
   diff       Diff the plan against what's deployed
   destroy    Tear down the deployed stack
@@ -32,8 +32,6 @@ Flags:
   --verbose, -v       Show full CDK/CloudFormation output (deploy/destroy)
   --strict            deploy: fail if any env("...") declared in code has no
                       value set locally/in CI (default: deploy + warn)
-  --remote            synth/deploy: build on the laranja server instead of
-                      locally (deploy still applies with YOUR AWS credentials)
   --all               logs: tail every function (multiplexed)
   --no-follow         logs: print recent history and exit (no live tail)
   --since <dur>       logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
@@ -79,14 +77,13 @@ async function main(): Promise<void> {
       await logout();
       break;
     case "synth":
-      await synthCommand(projectDir, { remote: rest.includes("--remote"), stage });
+      await synthCommand(projectDir, { stage });
       break;
     case "deploy":
       await deploy(projectDir, {
         verbose,
         stage,
         strict: rest.includes("--strict"),
-        remote: rest.includes("--remote"),
       });
       break;
     case "diff":

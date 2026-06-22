@@ -1,5 +1,5 @@
 import path from "node:path";
-import { readFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import {
   loadConfig,
   postSynth,
@@ -10,41 +10,18 @@ import {
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, computeAssetHashes } from "@laranja/cdk";
-import { buildAssembly, printPlan } from "../pipeline.js";
-
-/** Build + synth only (no AWS calls). Useful for inspecting what would deploy. */
-export async function synthCommand(projectDir: string, opts: { remote?: boolean; stage?: string } = {}): Promise<void> {
-  if (opts.remote) {
-    await synthRemote(projectDir, opts.stage);
-    return;
-  }
-
-  const { ir, stackName, cdkOutDir } = await buildAssembly(projectDir, { stage: opts.stage });
-  const templatePath = path.join(cdkOutDir, `${stackName}.template.json`);
-  const tpl = JSON.parse(readFileSync(templatePath, "utf8")) as { Resources: Record<string, { Type: string }> };
-
-  const counts: Record<string, number> = {};
-  for (const r of Object.values(tpl.Resources)) counts[r.Type] = (counts[r.Type] ?? 0) + 1;
-
-  console.log(`Plan for "${stackName}":`);
-  printPlan(ir);
-  console.log("\nAWS resources:");
-  for (const [type, count] of Object.entries(counts).sort()) {
-    console.log(`  ${String(count).padStart(2)}x  ${type}`);
-  }
-  console.log(`\nTemplate: ${path.relative(projectDir, templatePath)}`);
-}
+import { printPlan } from "../pipeline.js";
 
 /**
- * Server-side synth: scan -> IR -> POST /synth -> save the returned template.
- * Phase 2a — the template references handler assets by id and is NOT yet
- * deployable (the asset seam / S3 upload lands in 2b). Proves the wire + IR.
+ * Synth only (no AWS calls): scan -> IR -> POST /synth -> save the returned
+ * template. Synth always happens on the laranja server; we only bundle +
+ * fingerprint locally so the template's asset keys match our uploads.
  */
-async function synthRemote(projectDir: string, stage?: string): Promise<void> {
+export async function synthCommand(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("Set LARANJA_API_KEY to synth on the server.");
 
-  const config = await loadConfig(projectDir, { stage });
+  const config = await loadConfig(projectDir, { stage: opts.stage });
   if (!config.projectId) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to synth on the server.');
   }

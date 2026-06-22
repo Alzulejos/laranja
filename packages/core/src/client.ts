@@ -11,6 +11,7 @@ import {
   type SynthRequest,
   type SynthResponse,
   type DiffResponse,
+  type EjectResponse,
   type DeploymentPatch,
   type ResourcesReport,
   type DestroyRequest,
@@ -123,6 +124,20 @@ export function postDiff(
   baseUrl?: string,
 ): Promise<DiffResponse> {
   return apiRequest<DiffResponse>("POST", ENDPOINTS.diff, { apiKey, projectId, baseUrl, body: req });
+}
+
+/**
+ * `POST /v1/eject` — generate a standalone, owned CDK project from the IR. The
+ * server gates this on the caller's entitlement (403 if not allowed). Nothing is
+ * persisted; the client writes the returned files to disk.
+ */
+export function postEject(
+  req: SynthRequest,
+  apiKey: string,
+  projectId: string,
+  baseUrl?: string,
+): Promise<EjectResponse> {
+  return apiRequest<EjectResponse>("POST", ENDPOINTS.eject, { apiKey, projectId, baseUrl, body: req });
 }
 
 /**

@@ -40,6 +40,8 @@ export const ENDPOINTS = {
   deploymentDestroy: `${API_PREFIX}/deployment/destory`,
   /** POST — read-only synth (returns a template, creates NO deployment row). */
   diff: `${API_PREFIX}/diff`,
+  /** POST — generate a standalone, owned CDK project (paid; server-gated). */
+  eject: `${API_PREFIX}/eject`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -134,6 +136,15 @@ export interface CloudFormationSynthResponse extends SynthResponseBase {
 /** Paid only: a standalone, editable CDK project (server-side eject). */
 export interface CdkSynthResponse extends SynthResponseBase {
   artifact: "cdk";
+  files: GeneratedFile[];
+}
+
+/**
+ * `200` response from `/eject` — the generated standalone CDK project. Like the
+ * `cdk` synth response but with NO `deploymentId` (nothing is persisted). The
+ * server gates this on the caller's `canEject` entitlement (403 otherwise).
+ */
+export interface EjectResponse {
   files: GeneratedFile[];
 }
 

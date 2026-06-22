@@ -1,49 +1,47 @@
 import path from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig, stackName } from "@laranja/core";
+import { loadConfig, resolveApiKey, postEject, ApiRequestError } from "@laranja/core";
 import { scan } from "@laranja/scanner";
-import { generateEjectProject } from "@laranja/cdk";
 
 /**
- * License gate for paid features. STUB: accepts any non-empty LARANJA_LICENSE_KEY.
- * TODO: validate the key against the licensing API.
+ * Generate a standalone, owned CDK project. The project is synthesized on the
+ * laranja server (paid; the server gates entitlement and returns 403 if the
+ * caller can't eject) — we just write the returned files to `infra/`.
  */
-function requireLicense(): void {
-  const key = process.env.LARANJA_LICENSE_KEY;
-  if (!key) {
-    throw new Error(
-      "`eject` is a paid feature.\n" +
-        "  Set LARANJA_LICENSE_KEY to your license key to use it.\n" +
-        "  (Billing isn't wired yet — this is a stub gate.)",
-    );
-  }
-}
-
 export async function eject(projectDir: string, opts: { force?: boolean; stage?: string }): Promise<void> {
-  requireLicense();
-
   const config = await loadConfig(projectDir, { stage: opts.stage });
-  const ir = scan({ projectDir, config });
+  if (!config.projectId) {
+    throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to eject.');
+  }
+  const apiKey = resolveApiKey();
+  if (!apiKey) throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to eject.");
 
   const ejectDir = path.join(projectDir, "infra");
   if (existsSync(ejectDir) && !opts.force) {
     throw new Error(`${path.relative(projectDir, ejectDir)}/ already exists. Re-run with --force to overwrite.`);
   }
 
-  const files = generateEjectProject(ir, {
-    projectDir,
-    ejectDir,
-    stackName: stackName(config.name, config.stage),
-    region: config.region,
-  });
+  const ir = scan({ projectDir, config });
 
-  for (const file of files) {
+  let res;
+  try {
+    res = await postEject(
+      { project: ir.app.name, stage: ir.app.stage, artifact: "cdk", ir, assets: {} },
+      apiKey,
+      config.projectId,
+    );
+  } catch (err) {
+    if (err instanceof ApiRequestError) throw new Error(`Eject failed — ${err.message}`);
+    throw err;
+  }
+
+  for (const file of res.files) {
     const abs = path.join(ejectDir, file.path);
     mkdirSync(path.dirname(abs), { recursive: true });
     writeFileSync(abs, file.contents);
   }
 
-  console.log(`Ejected ${files.length} files to ${path.relative(projectDir, ejectDir)}/`);
+  console.log(`Ejected ${res.files.length} files to ${path.relative(projectDir, ejectDir)}/`);
   console.log("\nNext:");
   console.log("  cd infra");
   console.log("  npm install");

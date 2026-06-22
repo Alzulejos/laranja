@@ -2,6 +2,9 @@ node_modules/
 dist/
 .laranja/
 cdk.out/
+# Ejected CDK projects from `laranja eject` in our examples (throwaway here;
+# for real users it's their project to commit).
+examples/*/infra/
 *.log
 .DS_Store
 .env

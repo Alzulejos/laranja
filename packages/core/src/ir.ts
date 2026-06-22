@@ -113,6 +113,14 @@ export type CronIR = HandlerRef & {
   id: string;
   /** Provider-neutral schedule; the back half lowers it to the target's syntax. */
   schedule: Schedule;
+  /** IANA timezone for the schedule (needs EventBridge Scheduler, not Rules). */
+  timezone?: string;
+  /** Async-invoke retry attempts (AWS allows 0–2). */
+  retryAttempts?: number;
+  /** Max age (seconds) of an event before async retries are abandoned. */
+  maxEventAge?: number;
+  /** Dead-letter failed async invokes to another declared queue, referenced by id. */
+  dlq?: { queue: string };
   /** Resolved compute config for this cron's function. */
   compute?: ComputeConfig;
 };
@@ -124,6 +132,18 @@ export type QueueIR = HandlerRef & {
   name: string;
   batchSize?: number;
   fifo?: boolean;
+  /** FIFO content-based dedup (FIFO-only). Defaults to true for FIFO when unset. */
+  contentBasedDedup?: boolean;
+  /** Seconds a message stays hidden while being processed (AWS requires >= timeout). */
+  visibilityTimeout?: number;
+  /** Seconds to wait gathering a fuller batch before invoking the consumer. */
+  maxBatchingWindow?: number;
+  /** Report per-message failures so only failed items are retried, not the batch. */
+  reportBatchItemFailures?: boolean;
+  /** Seconds an undelivered message is retained on the source queue. */
+  messageRetention?: number;
+  /** Dead-letter after N failed receives to another declared queue, referenced by id. */
+  dlq?: { maxReceiveCount: number; queue: string };
   /** Resolved compute config for this queue's consumer function. */
   compute?: ComputeConfig;
 };

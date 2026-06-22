@@ -12,6 +12,7 @@ import {
   type InfraIR,
   type LaranjaConfig,
   type QueueIR,
+  type ResourceConfig,
 } from "@laranja/core";
 import { getPropertyInitializer, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
@@ -106,10 +107,24 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   // Validate `resources` keys against the resources we actually found, then merge
   // global `compute` defaults with each per-resource override and attach the
   // result to the IR. An unknown key is a typo — fail loudly rather than no-op.
+  // Resource keys: http -> "http", cron -> its id, queue -> its NAME (what the
+  // user wrote in @Queue/queue() — the natural handle, and what a DLQ references).
+  // They share one namespace, so reject collisions before anything references them.
+  assertUniqueResourceKeys(http, crons, queues);
   validateResourceKeys(config, http, crons, queues);
-  if (http) http.compute = resolveCompute(config, "http");
-  for (const c of crons) c.compute = resolveCompute(config, c.id);
-  for (const q of queues) q.compute = resolveCompute(config, q.id);
+  const queueNames = new Set(queues.map((q) => q.name));
+  if (http) {
+    http.compute = resolveCompute(config, "http");
+    rejectForeignKeys("http", "http app", config.resources?.["http"], COMPUTE_KEYS);
+  }
+  for (const c of crons) {
+    c.compute = resolveCompute(config, c.id);
+    applyCronConfig(c, config.resources?.[c.id], queueNames);
+  }
+  for (const q of queues) {
+    q.compute = resolveCompute(config, q.name);
+    applyQueueConfig(q, config.resources?.[q.name], queueNames);
+  }
 
   const stage = config.stage ?? "dev";
   const provider = config.provider ?? "aws";
@@ -164,7 +179,7 @@ function validateResourceKeys(
   const validIds = new Set<string>([
     ...(http ? ["http"] : []),
     ...crons.map((c) => c.id),
-    ...queues.map((q) => q.id),
+    ...queues.map((q) => q.name),
   ]);
   for (const key of Object.keys(config.resources)) {
     if (!validIds.has(key)) {
@@ -173,6 +188,119 @@ function validateResourceKeys(
         `laranja.config.ts: resources["${key}"] doesn't match any resource. Known ids: ${known}.`,
       );
     }
+  }
+}
+
+/**
+ * http ("http"), crons (their id), and queues (their name) all live in one
+ * resource-key namespace — used by `resources` overrides and DLQ references. A
+ * collision (two queues named the same, or a queue name equal to a cron id) would
+ * make a key ambiguous, so reject it early with a clear message rather than let
+ * CloudFormation fail on a duplicate physical name later.
+ */
+function assertUniqueResourceKeys(http: HttpIR | undefined, crons: CronIR[], queues: QueueIR[]): void {
+  const seen = new Map<string, string>();
+  const claim = (key: string, what: string): void => {
+    const prev = seen.get(key);
+    if (prev) {
+      throw new Error(`laranja.config.ts: resource id "${key}" is used by both ${prev} and ${what} — ids must be unique.`);
+    }
+    seen.set(key, what);
+  };
+  if (http) claim("http", "the HTTP app");
+  for (const c of crons) claim(c.id, `cron "${c.id}"`);
+  for (const q of queues) claim(q.name, `queue "${q.name}"`);
+}
+
+/** Default consumer timeout (seconds); mirrors the back-half so validation matches. */
+const DEFAULT_CONSUMER_TIMEOUT = 30;
+
+const COMPUTE_KEYS = new Set(["memory", "timeout", "maxConcurrency", "architecture", "logRetention"]);
+const QUEUE_KEYS = new Set([
+  "contentBasedDedup",
+  "visibilityTimeout",
+  "maxBatchingWindow",
+  "reportBatchItemFailures",
+  "messageRetention",
+  "dlq",
+]);
+const CRON_KEYS = new Set(["timezone", "retryAttempts", "maxEventAge", "dlq"]);
+
+/** Reject any override key that doesn't apply to this resource's kind. */
+function rejectForeignKeys(
+  id: string,
+  kind: string,
+  override: ResourceConfig | undefined,
+  ...allowed: Set<string>[]
+): void {
+  if (!override) return;
+  for (const key of Object.keys(override)) {
+    if (!allowed.some((set) => set.has(key))) {
+      throw new Error(`laranja.config.ts: resources["${id}"].${key} is not valid for a ${kind}.`);
+    }
+  }
+}
+
+/** Apply a cron's per-resource override (timezone, async retry, DLQ) onto its IR. */
+function applyCronConfig(c: CronIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+  if (!override) return;
+  rejectForeignKeys(c.id, "cron", override, COMPUTE_KEYS, CRON_KEYS);
+  if (override.timezone !== undefined) c.timezone = override.timezone;
+  if (override.retryAttempts !== undefined) {
+    if (override.retryAttempts < 0 || override.retryAttempts > 2) {
+      throw new Error(`laranja.config.ts: resources["${c.id}"].retryAttempts must be between 0 and 2.`);
+    }
+    c.retryAttempts = override.retryAttempts;
+  }
+  if (override.maxEventAge !== undefined) c.maxEventAge = override.maxEventAge;
+  if (override.dlq) {
+    assertDlqTarget(c.id, override.dlq.queue, queueNames);
+    c.dlq = { queue: override.dlq.queue };
+  }
+}
+
+/** Apply a queue's per-resource override (SQS + event-source knobs, DLQ) onto its IR. */
+function applyQueueConfig(q: QueueIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+  if (!override) return;
+  rejectForeignKeys(q.name, "queue", override, COMPUTE_KEYS, QUEUE_KEYS);
+  if (override.contentBasedDedup !== undefined) {
+    if (!q.fifo) {
+      throw new Error(`laranja.config.ts: resources["${q.name}"].contentBasedDedup is FIFO-only.`);
+    }
+    q.contentBasedDedup = override.contentBasedDedup;
+  }
+  if (override.maxBatchingWindow !== undefined) q.maxBatchingWindow = override.maxBatchingWindow;
+  if (override.reportBatchItemFailures !== undefined) q.reportBatchItemFailures = override.reportBatchItemFailures;
+  if (override.messageRetention !== undefined) q.messageRetention = override.messageRetention;
+  if (override.visibilityTimeout !== undefined) {
+    const timeout = q.compute?.timeout ?? DEFAULT_CONSUMER_TIMEOUT;
+    if (override.visibilityTimeout < timeout) {
+      throw new Error(
+        `laranja.config.ts: resources["${q.name}"].visibilityTimeout (${override.visibilityTimeout}s) ` +
+          `must be >= the consumer timeout (${timeout}s).`,
+      );
+    }
+    q.visibilityTimeout = override.visibilityTimeout;
+  }
+  if (override.dlq) {
+    if (override.dlq.maxReceiveCount === undefined) {
+      throw new Error(`laranja.config.ts: resources["${q.name}"].dlq requires maxReceiveCount.`);
+    }
+    assertDlqTarget(q.name, override.dlq.queue, queueNames);
+    q.dlq = { maxReceiveCount: override.dlq.maxReceiveCount, queue: override.dlq.queue };
+  }
+}
+
+/** A DLQ target must be another declared queue (by name) — never missing, never itself. */
+function assertDlqTarget(key: string, target: string, queueNames: Set<string>): void {
+  if (target === key) {
+    throw new Error(`laranja.config.ts: resources["${key}"].dlq.queue cannot be the queue itself.`);
+  }
+  if (!queueNames.has(target)) {
+    const known = [...queueNames].sort().join(", ") || "(none)";
+    throw new Error(
+      `laranja.config.ts: resources["${key}"].dlq.queue "${target}" is not a declared queue. Queues: ${known}.`,
+    );
   }
 }
 

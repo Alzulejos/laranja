@@ -251,6 +251,120 @@ describe("compute config", () => {
   });
 });
 
+describe("queue & cron config", () => {
+  // Two queues (the second doubles as a DLQ target) + one cron. Function-style so
+  // ids are the export names: "process", "onDead", "reconcile".
+  const makeJobs = () =>
+    makeProject({
+      "src/jobs.ts": `
+        import { cron, queue, rate } from "@laranja/decorators";
+        export async function process() {}
+        export async function onDead() {}
+        export async function reconcile() {}
+        queue({ name: "orders" }, process);
+        queue({ name: "orders-dead" }, onDead);
+        cron(rate(1, "hour"), reconcile);
+      `,
+    });
+
+  test("applies queue knobs and resolves a DLQ reference by id", () => {
+    const ir = scan({
+      projectDir: makeJobs(),
+      config: cfg({
+        http: false,
+        resources: {
+          // keyed by queue NAME, and the DLQ references another queue by name
+          orders: {
+            visibilityTimeout: 60,
+            maxBatchingWindow: 5,
+            reportBatchItemFailures: true,
+            messageRetention: 1209600,
+            dlq: { maxReceiveCount: 3, queue: "orders-dead" },
+          },
+        },
+      }),
+    });
+    expect(ir.queues.find((q) => q.id === "process")).toMatchObject({
+      visibilityTimeout: 60,
+      maxBatchingWindow: 5,
+      reportBatchItemFailures: true,
+      messageRetention: 1209600,
+      dlq: { maxReceiveCount: 3, queue: "orders-dead" },
+    });
+  });
+
+  test("applies cron knobs and resolves a DLQ reference by id", () => {
+    const ir = scan({
+      projectDir: makeJobs(),
+      config: cfg({
+        http: false,
+        resources: {
+          reconcile: { timezone: "Europe/Berlin", retryAttempts: 2, maxEventAge: 3600, dlq: { queue: "orders-dead" } },
+        },
+      }),
+    });
+    expect(ir.crons.find((c) => c.id === "reconcile")).toMatchObject({
+      timezone: "Europe/Berlin",
+      retryAttempts: 2,
+      maxEventAge: 3600,
+      dlq: { queue: "orders-dead" },
+    });
+  });
+
+  const expectThrow = (resources: Record<string, unknown>, re: RegExp) =>
+    expect(() => scan({ projectDir: makeJobs(), config: cfg({ http: false, resources: resources as never }) })).toThrow(re);
+
+  test("rejects a DLQ target that isn't a declared queue", () => {
+    expectThrow({ orders: { dlq: { maxReceiveCount: 3, queue: "ghost" } } }, /is not a declared queue/);
+  });
+
+  test("rejects a DLQ that points at itself", () => {
+    expectThrow({ orders: { dlq: { maxReceiveCount: 3, queue: "orders" } } }, /cannot be the queue itself/);
+  });
+
+  test("requires maxReceiveCount on a queue DLQ", () => {
+    expectThrow({ orders: { dlq: { queue: "orders-dead" } } }, /requires maxReceiveCount/);
+  });
+
+  test("rejects visibilityTimeout below the consumer timeout", () => {
+    expect(() =>
+      scan({
+        projectDir: makeJobs(),
+        config: cfg({ http: false, compute: { timeout: 60 }, resources: { orders: { visibilityTimeout: 30 } } }),
+      }),
+    ).toThrow(/must be >= the consumer timeout/);
+  });
+
+  test("rejects contentBasedDedup on a non-FIFO queue", () => {
+    expectThrow({ orders: { contentBasedDedup: true } }, /FIFO-only/);
+  });
+
+  test("rejects retryAttempts outside 0–2", () => {
+    expectThrow({ reconcile: { retryAttempts: 5 } }, /between 0 and 2/);
+  });
+
+  test("rejects a cron-only knob on a queue", () => {
+    expectThrow({ orders: { timezone: "UTC" } }, /timezone is not valid for a queue/);
+  });
+
+  test("rejects a queue-only knob on a cron", () => {
+    expectThrow({ reconcile: { visibilityTimeout: 60 } }, /visibilityTimeout is not valid for a cron/);
+  });
+
+  test("rejects two queues that share a name", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { queue } from "@laranja/decorators";
+        export async function a() {}
+        export async function b() {}
+        queue({ name: "orders" }, a);
+        queue({ name: "orders" }, b);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false }) })).toThrow(/must be unique/);
+  });
+});
+
 describe("env() discovery", () => {
   test("collects env('LITERAL') names — deduped, sorted, location-independent", () => {
     const dir = makeProject({

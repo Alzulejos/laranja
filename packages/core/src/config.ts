@@ -5,10 +5,40 @@ import type { CloudProvider, ComputeConfig, Framework } from "./ir.js";
 
 /**
  * Per-resource overrides, keyed by resource id in `resources` ("http", or a
- * cron/queue id). Today it carries only compute knobs; queue/cron-specific
- * overrides get added in their own rounds.
+ * cron/queue id). Carries the shared compute knobs plus queue- and cron-specific
+ * tuning. A field that doesn't apply to a resource's kind (e.g. a cron knob on a
+ * queue) is rejected at scan time. (Per-kind compile-time typing waits on the
+ * generated `ResourceId` union.)
  */
-export interface ResourceConfig extends ComputeConfig {}
+export interface ResourceConfig extends ComputeConfig {
+  // --- queue-only ---
+  /** FIFO content-based dedup (FIFO queues only). */
+  contentBasedDedup?: boolean;
+  /** Seconds a message stays hidden while processed. Must be >= the consumer timeout. */
+  visibilityTimeout?: number;
+  /** Seconds to wait gathering a fuller batch before invoking. */
+  maxBatchingWindow?: number;
+  /** Report per-message failures so only failed items retry. */
+  reportBatchItemFailures?: boolean;
+  /** Seconds an undelivered message is retained on the source queue. */
+  messageRetention?: number;
+
+  // --- cron-only ---
+  /** IANA timezone for the schedule. */
+  timezone?: string;
+  /** Async-invoke retry attempts (0–2). */
+  retryAttempts?: number;
+  /** Max age (seconds) of an event before async retries are abandoned. */
+  maxEventAge?: number;
+
+  // --- both (shape differs by kind) ---
+  /**
+   * Dead-letter target — the id of another declared queue. Queues require
+   * `maxReceiveCount` (after N failed receives → dead-letter); crons ignore it
+   * (a failed async invoke dead-letters immediately).
+   */
+  dlq?: { queue: string; maxReceiveCount?: number };
+}
 
 /** User-authored config, loaded from `laranja.config.ts`. */
 export interface LaranjaConfig {

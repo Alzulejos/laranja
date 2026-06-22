@@ -38,6 +38,8 @@ export const ENDPOINTS = {
   deploymentResources: (id: string) => `${API_PREFIX}/deployment/${id}/resources`,
   /** POST — open a teardown deployment row (destroy has no `/synth`). */
   deploymentDestroy: `${API_PREFIX}/deployment/destory`,
+  /** POST — read-only synth (returns a template, creates NO deployment row). */
+  diff: `${API_PREFIX}/diff`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -137,6 +139,13 @@ export interface CdkSynthResponse extends SynthResponseBase {
 
 /** `200` response from `/synth` — discriminated on `artifact`. */
 export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
+
+/**
+ * `200` response from `/diff` — a read-only synth. Same fields as the
+ * CloudFormation synth response but with NO `deploymentId` (nothing is
+ * persisted). Fields are optional to mirror the server's `Partial<SynthResponse>`.
+ */
+export type DiffResponse = Partial<Pick<CloudFormationSynthResponse, "stackName" | "template" | "assets">>;
 
 /* -------------------------------------------------------------------------- */
 /* Deployment reporting (lifecycle)                                           */

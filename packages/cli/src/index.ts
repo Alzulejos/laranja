@@ -1,4 +1,4 @@
-export { buildAssembly, printPlan } from "./pipeline.js";
+export { printPlan } from "./pipeline.js";
 export type { Assembly } from "./pipeline.js";
 export { init } from "./commands/init.js";
 export { synthCommand } from "./commands/synth.js";

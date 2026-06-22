@@ -10,11 +10,10 @@
   "scripts": {
     "scan:express": "tsx packages/scanner/src/dev-scan.ts examples/express-basic",
     "build:express": "tsx packages/runtime/src/dev-build.ts examples/express-basic",
-    "synth:express": "tsx packages/cdk/src/dev-synth.ts examples/express-basic",
     "laranja": "tsx packages/cli/src/cli.ts",
     "deploy:express": "tsx packages/cli/src/cli.ts deploy examples/express-basic",
     "destroy:express": "tsx packages/cli/src/cli.ts destroy examples/express-basic",
-    "deploy:cf": "tsx packages/cli/src/cli.ts deploy examples/express-codefirst --remote",
+    "deploy:cf": "tsx packages/cli/src/cli.ts deploy examples/express-codefirst",
     "destroy:cf": "tsx packages/cli/src/cli.ts destroy examples/express-codefirst",
     "log:cf": "tsx packages/cli/src/cli.ts logs examples/express-codefirst",
     "typecheck": "tsc -b",

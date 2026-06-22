@@ -10,6 +10,7 @@ import {
   type MeResponse,
   type SynthRequest,
   type SynthResponse,
+  type DiffResponse,
   type DeploymentPatch,
   type ResourcesReport,
   type DestroyRequest,
@@ -109,6 +110,19 @@ export function postSynth(
   baseUrl?: string,
 ): Promise<SynthResponse> {
   return apiRequest<SynthResponse>("POST", ENDPOINTS.synth, { apiKey, projectId, baseUrl, body: req });
+}
+
+/**
+ * `POST /v1/diff` — a read-only synth: same input as `/synth`, returns a template
+ * to diff against the deployed stack, but creates NO deployment row.
+ */
+export function postDiff(
+  req: SynthRequest,
+  apiKey: string,
+  projectId: string,
+  baseUrl?: string,
+): Promise<DiffResponse> {
+  return apiRequest<DiffResponse>("POST", ENDPOINTS.diff, { apiKey, projectId, baseUrl, body: req });
 }
 
 /**

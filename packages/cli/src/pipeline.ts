@@ -3,13 +3,13 @@ import { rmSync } from "node:fs";
 import {
   loadConfig,
   postSynth,
-  stackName,
+  postDiff,
   ApiRequestError,
   type InfraIR,
 } from "@laranja/core";
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
-import { bundleEntries, computeAssetHashes, assembleFromTemplate, synth } from "@laranja/cdk";
+import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@laranja/cdk";
 
 export interface Assembly {
   ir: InfraIR;
@@ -19,54 +19,25 @@ export interface Assembly {
   region?: string;
 }
 
-/** A server-built assembly also carries the dashboard deployment id to echo back. */
+/** A deploy assembly also carries the dashboard deployment id to echo back. */
 export interface RemoteAssembly extends Assembly {
   deploymentId: string;
 }
 
-/**
- * The shared front-to-back pipeline used by every command that needs infra:
- * scan -> generate shims -> bundle -> synth, all into ephemeral `.laranja/`.
- */
-export async function buildAssembly(
-  projectDir: string,
-  env?: { region?: string; account?: string; stage?: string },
-): Promise<Assembly> {
-  const outRoot = path.join(projectDir, ".laranja");
-  const entryDir = path.join(outRoot, "entries");
-  const buildDir = path.join(outRoot, "build");
-  const cdkOutDir = path.join(outRoot, "cdk.out");
-
-  rmSync(outRoot, { recursive: true, force: true });
-
-  const config = await loadConfig(projectDir, { stage: env?.stage });
-  const name = stackName(config.name, config.stage);
-  const ir = scan({ projectDir, config });
-  const entries = generateEntries(ir, { projectDir, entryDir });
-  const handlers = await bundleEntries(entries, { entryDir, buildDir });
-  synth(ir, handlers, {
-    outdir: cdkOutDir,
-    stackName: name,
-    region: env?.region ?? config.region,
-    account: env?.account,
-  });
-
-  return { ir, stackName: name, cdkOutDir, region: env?.region ?? config.region };
+interface BuildEnv {
+  region?: string;
+  account?: string;
+  stage?: string;
 }
 
 /**
- * The remote counterpart of `buildAssembly`: scan -> generate shims -> bundle ->
- * fingerprint, then let the SERVER synth the template (no synth on this machine).
- * We bundle locally only to (a) fingerprint each handler with CDK's own asset
- * hash — which the server embeds into the template as `<hash>.zip` — and (b) have
- * the zips on hand so the toolkit can upload them at deploy. The source code
- * never leaves the machine; only the IR + hashes cross the wire.
+ * Scan -> generate shims -> bundle -> fingerprint, into ephemeral `.laranja/`.
+ * Synth happens on the laranja SERVER, never here — we bundle locally only to
+ * fingerprint each handler (so the server template's `<hash>.zip` keys match) and
+ * to have the zips on hand for the toolkit to upload. The source never leaves the
+ * machine; only the IR + hashes cross the wire.
  */
-export async function buildRemoteAssembly(
-  projectDir: string,
-  env: { region?: string; account?: string; stage?: string },
-  apiKey: string,
-): Promise<RemoteAssembly> {
+async function prepareUpload(projectDir: string, env: BuildEnv) {
   const outRoot = path.join(projectDir, ".laranja");
   const entryDir = path.join(outRoot, "entries");
   const buildDir = path.join(outRoot, "build");
@@ -76,19 +47,33 @@ export async function buildRemoteAssembly(
 
   const config = await loadConfig(projectDir, { stage: env.stage });
   if (!config.projectId) {
-    throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to deploy via the server.');
+    throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to use the laranja server.');
   }
   const ir = scan({ projectDir, config });
   const entries = generateEntries(ir, { projectDir, entryDir });
   const handlers = await bundleEntries(entries, { entryDir, buildDir });
   const assets = computeAssetHashes(handlers);
 
+  return { projectId: config.projectId, ir, handlers, assets, cdkOutDir, region: env.region ?? config.region };
+}
+
+/**
+ * Server build for a deploy: prepare upload -> `/synth` (opens a deployment row)
+ * -> assemble the returned template into a deployable cloud assembly.
+ */
+export async function buildRemoteAssembly(
+  projectDir: string,
+  env: BuildEnv,
+  apiKey: string,
+): Promise<RemoteAssembly> {
+  const { projectId, ir, handlers, assets, cdkOutDir, region } = await prepareUpload(projectDir, env);
+
   let res;
   try {
     res = await postSynth(
       { project: ir.app.name, stage: ir.app.stage, artifact: "cloudformation", ir, assets },
       apiKey,
-      config.projectId,
+      projectId,
     );
   } catch (err) {
     if (err instanceof ApiRequestError) throw new Error(`Synth failed — ${err.message}`);
@@ -103,17 +88,50 @@ export async function buildRemoteAssembly(
     stackName: res.stackName,
     template: res.template,
     handlers,
-    region: env.region ?? config.region,
+    region,
     account: env.account,
   });
 
-  return {
-    ir,
+  return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId };
+}
+
+/**
+ * Server build for a diff: prepare upload -> `/diff` (read-only synth, NO
+ * deployment row) -> assemble the returned template so the toolkit can diff it
+ * against the deployed stack.
+ */
+export async function buildDiffAssembly(
+  projectDir: string,
+  env: BuildEnv,
+  apiKey: string,
+): Promise<Assembly> {
+  const { projectId, ir, handlers, assets, cdkOutDir, region } = await prepareUpload(projectDir, env);
+
+  let res;
+  try {
+    res = await postDiff(
+      { project: ir.app.name, stage: ir.app.stage, artifact: "cloudformation", ir, assets },
+      apiKey,
+      projectId,
+    );
+  } catch (err) {
+    if (err instanceof ApiRequestError) throw new Error(`Diff failed — ${err.message}`);
+    throw err;
+  }
+  if (!res.stackName || !res.template) {
+    throw new Error("Server did not return a template to diff.");
+  }
+
+  assembleFromTemplate({
+    outdir: cdkOutDir,
     stackName: res.stackName,
-    cdkOutDir,
-    region: env.region ?? config.region,
-    deploymentId: res.deploymentId,
-  };
+    template: res.template,
+    handlers,
+    region,
+    account: env.account,
+  });
+
+  return { ir, stackName: res.stackName, cdkOutDir, region };
 }
 
 export function printPlan(ir: InfraIR): void {

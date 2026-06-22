@@ -188,6 +188,69 @@ describe("nothing to deploy", () => {
   });
 });
 
+describe("compute config", () => {
+  const jobs = {
+    "src/jobs.ts": `
+      import { Cron, every } from "@laranja/decorators";
+      export class Jobs {
+        @Cron({ schedule: every("day"), id: "cleanup" })
+        async cleanup() {}
+      }
+    `,
+  };
+
+  test("applies global compute defaults to every resource", () => {
+    const dir = makeProject(jobs);
+    const ir = scan({
+      projectDir: dir,
+      config: cfg({ http: false, compute: { memory: 256, timeout: 30 } }),
+    });
+    expect(ir.crons[0].compute).toEqual({ memory: 256, timeout: 30 });
+  });
+
+  test("a per-resource override wins field by field over the global default", () => {
+    const dir = makeProject(jobs);
+    const ir = scan({
+      projectDir: dir,
+      config: cfg({
+        http: false,
+        compute: { memory: 256, timeout: 30 },
+        resources: { cleanup: { memory: 1024, architecture: "arm64" } },
+      }),
+    });
+    // memory overridden, timeout inherited, architecture added
+    expect(ir.crons[0].compute).toEqual({ memory: 1024, timeout: 30, architecture: "arm64" });
+  });
+
+  test("leaves compute undefined when nothing is configured", () => {
+    const dir = makeProject(jobs);
+    const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
+    expect(ir.crons[0].compute).toBeUndefined();
+  });
+
+  test("the http proxy is configured under the 'http' id", () => {
+    const dir = makeProject({
+      "src/app.ts": `
+        import express from "express";
+        export const app = express();
+        app.get("/", (_req, res) => res.json({ ok: true }));
+      `,
+    });
+    const ir = scan({
+      projectDir: dir,
+      config: cfg({ entry: "src/app.ts", appExport: "app", resources: { http: { memory: 512 } } }),
+    });
+    expect(ir.http?.compute).toEqual({ memory: 512 });
+  });
+
+  test("throws on a resources key that matches no resource", () => {
+    const dir = makeProject(jobs);
+    expect(() =>
+      scan({ projectDir: dir, config: cfg({ http: false, resources: { cleanp: { memory: 512 } } }) }),
+    ).toThrow(/resources\["cleanp"\] doesn't match any resource. Known ids: cleanup/);
+  });
+});
+
 describe("env() discovery", () => {
   test("collects env('LITERAL') names — deduped, sorted, location-independent", () => {
     const dir = makeProject({

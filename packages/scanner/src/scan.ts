@@ -4,6 +4,7 @@ import { Project, Node } from "ts-morph";
 import type { ClassDeclaration, MethodDeclaration, SourceFile } from "ts-morph";
 import {
   assertSchedule,
+  type ComputeConfig,
   type CronIR,
   type Framework,
   type HttpIR,
@@ -102,6 +103,14 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     );
   }
 
+  // Validate `resources` keys against the resources we actually found, then merge
+  // global `compute` defaults with each per-resource override and attach the
+  // result to the IR. An unknown key is a typo — fail loudly rather than no-op.
+  validateResourceKeys(config, http, crons, queues);
+  if (http) http.compute = resolveCompute(config, "http");
+  for (const c of crons) c.compute = resolveCompute(config, c.id);
+  for (const q of queues) q.compute = resolveCompute(config, q.id);
+
   const stage = config.stage ?? "dev";
   const provider = config.provider ?? "aws";
 
@@ -119,6 +128,52 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
 
 function loc(rel: string, node: Node): string {
   return `${rel}:${node.getStartLineNumber()}`;
+}
+
+/**
+ * Pick only the compute fields from a config block, dropping `undefined` so they
+ * never clobber a lower-precedence value during the merge. Done by explicit field
+ * list (not a blind spread) so future resource-specific keys in `ResourceConfig`
+ * don't leak into the compute IR.
+ */
+function pickCompute(src: ComputeConfig | undefined): ComputeConfig {
+  const out: ComputeConfig = {};
+  if (!src) return out;
+  if (src.memory !== undefined) out.memory = src.memory;
+  if (src.timeout !== undefined) out.timeout = src.timeout;
+  if (src.maxConcurrency !== undefined) out.maxConcurrency = src.maxConcurrency;
+  if (src.architecture !== undefined) out.architecture = src.architecture;
+  if (src.logRetention !== undefined) out.logRetention = src.logRetention;
+  return out;
+}
+
+/** Merge global `compute` defaults with a resource's override; override wins per field. */
+function resolveCompute(config: ScanInput["config"], id: string): ComputeConfig | undefined {
+  const merged = { ...pickCompute(config.compute), ...pickCompute(config.resources?.[id]) };
+  return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/** Every `resources` key must name a real resource — a typo'd id is a hard error. */
+function validateResourceKeys(
+  config: ScanInput["config"],
+  http: HttpIR | undefined,
+  crons: CronIR[],
+  queues: QueueIR[],
+): void {
+  if (!config.resources) return;
+  const validIds = new Set<string>([
+    ...(http ? ["http"] : []),
+    ...crons.map((c) => c.id),
+    ...queues.map((q) => q.id),
+  ]);
+  for (const key of Object.keys(config.resources)) {
+    if (!validIds.has(key)) {
+      const known = [...validIds].sort().join(", ") || "(none)";
+      throw new Error(
+        `laranja.config.ts: resources["${key}"] doesn't match any resource. Known ids: ${known}.`,
+      );
+    }
+  }
 }
 
 function collectFromMethod(

@@ -22,6 +22,11 @@ const config: LaranjaConfig = {
   entry: "src/app.ts",
   appExport: "app",
   env: {},
+  // Default compute for every function (the HTTP proxy + each cron/queue).
+  compute: { memory: 256, timeout: 30 },
+  // Per-resource overrides, keyed by resource id ("http", or a cron/queue id).
+  // Filled in once you have resources, e.g.:
+  // resources: { cleanup: { memory: 512, timeout: 60 } },
 };
 
 export default config;

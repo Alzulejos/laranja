@@ -1,7 +1,14 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import type { CloudProvider, Framework } from "./ir.js";
+import type { CloudProvider, ComputeConfig, Framework } from "./ir.js";
+
+/**
+ * Per-resource overrides, keyed by resource id in `resources` ("http", or a
+ * cron/queue id). Today it carries only compute knobs; queue/cron-specific
+ * overrides get added in their own rounds.
+ */
+export interface ResourceConfig extends ComputeConfig {}
 
 /** User-authored config, loaded from `laranja.config.ts`. */
 export interface LaranjaConfig {
@@ -34,6 +41,17 @@ export interface LaranjaConfig {
   appExport?: string;
   /** Plain env injected into every Lambda. */
   env?: Record<string, string>;
+  /**
+   * Default compute config (memory, timeout, …) applied to every function — the
+   * HTTP proxy and each cron/queue consumer. Override per-resource via `resources`.
+   */
+  compute?: ComputeConfig;
+  /**
+   * Per-resource overrides keyed by resource id ("http", or a cron/queue id).
+   * Each merges on top of `compute`, field by field. An unknown id is a hard
+   * error at scan time so a typo never silently no-ops.
+   */
+  resources?: Record<string, ResourceConfig>;
 }
 
 export const CONFIG_FILENAME = "laranja.config.ts";
@@ -78,6 +96,15 @@ export async function loadConfig(
   // `entry` is intentionally NOT required here: the HTTP app may instead be
   // declared in code via an `http(app)` marker, which the scanner resolves. The
   // scanner raises a clear error if there's ultimately nothing to deploy.
+  // Only AWS is implemented today. Reject any other provider up front so a
+  // forward-compatible config field never silently deploys to the wrong (or no)
+  // back-half. This guard goes away per-arm once a discriminated union of real
+  // providers exists.
+  if (cfg.provider && cfg.provider !== "aws") {
+    throw new Error(
+      `${CONFIG_FILENAME}: provider "${cfg.provider}" isn't supported yet — only "aws" today.`,
+    );
+  }
   return {
     appExport: "app",
     stage: "dev",

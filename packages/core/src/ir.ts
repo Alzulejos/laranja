@@ -18,6 +18,29 @@ export type Framework = "express" | "nest";
  */
 export type CloudProvider = "aws" | "azure" | "gcp" | "cloudflare";
 
+/**
+ * Runtime config shared by every function-backed resource — the HTTP proxy and
+ * each cron/queue consumer all become a function, so they all carry this.
+ *
+ * Sourced from the config's global `compute` defaults, overridden per-resource by
+ * `resources[id]`; the scanner merges the two and attaches the result here. Each
+ * field maps to a real knob on AWS Lambda, GCP Cloud Functions, and Azure
+ * Functions — except the two flagged AWS-honest, which a future provider union
+ * rejects on non-AWS targets rather than fake-abstracting.
+ */
+export interface ComputeConfig {
+  /** Memory in MB. */
+  memory?: number;
+  /** Max wall-clock seconds per invocation. */
+  timeout?: number;
+  /** Cap on simultaneous executions (AWS reserved concurrency / GCP maxInstances). */
+  maxConcurrency?: number;
+  /** CPU architecture. AWS-honest. */
+  architecture?: "x86_64" | "arm64";
+  /** Log retention in days. AWS-honest (CloudWatch log group). */
+  logRetention?: number;
+}
+
 /** A point in the user's source, for diagnostics / visibility. e.g. "src/jobs.ts:12" */
 export type SourceLocation = string;
 
@@ -80,6 +103,8 @@ export interface HttpIR {
   /** Named export of the app within `handlerEntry` (e.g. "app" or "default"). */
   appExport: string;
   routes: HttpRoute[];
+  /** Resolved compute config for the proxy function (keyed as "http" in `resources`). */
+  compute?: ComputeConfig;
 }
 
 /** @Cron(...) / cron(...) -> scheduled trigger -> its own Lambda. */
@@ -88,6 +113,8 @@ export type CronIR = HandlerRef & {
   id: string;
   /** Provider-neutral schedule; the back half lowers it to the target's syntax. */
   schedule: Schedule;
+  /** Resolved compute config for this cron's function. */
+  compute?: ComputeConfig;
 };
 
 /** @Queue({ name }) / queue(...) -> SQS queue -> its own consumer Lambda. */
@@ -97,6 +124,8 @@ export type QueueIR = HandlerRef & {
   name: string;
   batchSize?: number;
   fifo?: boolean;
+  /** Resolved compute config for this queue's consumer function. */
+  compute?: ComputeConfig;
 };
 
 export interface InfraIR {

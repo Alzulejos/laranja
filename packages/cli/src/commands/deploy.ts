@@ -13,18 +13,10 @@ import {
 import { buildAssembly, buildRemoteAssembly, type RemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
+import { reportSafely } from "../lifecycle.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
-
-/** Fire a dashboard report without letting a reporting failure mask the deploy. */
-async function reportSafely(what: string, fn: () => Promise<unknown>): Promise<void> {
-  try {
-    await fn();
-  } catch (err) {
-    ui.warn(`couldn't ${what} to the dashboard (${err instanceof Error ? err.message : String(err)})`);
-  }
-}
 
 export async function deploy(
   projectDir: string,

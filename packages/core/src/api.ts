@@ -36,6 +36,8 @@ export const ENDPOINTS = {
   deployment: (id: string) => `${API_PREFIX}/deployment/${id}`,
   /** POST — report the deployed resource inventory (success only). */
   deploymentResources: (id: string) => `${API_PREFIX}/deployment/${id}/resources`,
+  /** POST — open a teardown deployment row (destroy has no `/synth`). */
+  deploymentDestroy: `${API_PREFIX}/deployment/destory`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -226,6 +228,26 @@ export interface DeployedResource {
  */
 export interface ResourcesReport {
   resources: DeployedResource[];
+}
+
+/**
+ * `POST /v1/deployment/destory` body — opens a teardown deployment row. A destroy
+ * never hits `/synth` (nothing to synthesize), so this is how it gets a row + id.
+ * The project comes from the API key; the body identifies the stack being torn
+ * down. The BE owns the REMOVED resource inventory (from the last deployment).
+ */
+export interface DestroyRequest {
+  /** Physical stack name, e.g. "myapp-dev". */
+  stackName: string;
+  artifact: SynthArtifact;
+  /** Target cloud, e.g. "AWS". */
+  provider: string;
+  region: string;
+}
+
+/** `POST /v1/deployment/destory` response — the new teardown row's id. */
+export interface DestroyResponse {
+  deploymentId: string;
 }
 
 /* -------------------------------------------------------------------------- */

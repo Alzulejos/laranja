@@ -12,6 +12,8 @@ import {
   type SynthResponse,
   type DeploymentPatch,
   type ResourcesReport,
+  type DestroyRequest,
+  type DestroyResponse,
   type ApiError,
   type ApiErrorCode,
 } from "./api.js";
@@ -135,4 +137,14 @@ export function postDeploymentResources(
   baseUrl?: string,
 ): Promise<boolean> {
   return apiRequest<boolean>("POST", ENDPOINTS.deploymentResources(deploymentId), { apiKey, baseUrl, body });
+}
+
+/**
+ * `POST /v1/deployment/destory` — open a teardown deployment row and get its id,
+ * so a destroy can drive the same status lifecycle (STARTED → SUCCESS/FAILED).
+ * Tolerates either a `{ deploymentId }` body or a bare id string.
+ */
+export async function postDestroy(req: DestroyRequest, apiKey: string, baseUrl?: string): Promise<string> {
+  const res = await apiRequest<DestroyResponse | string>("POST", ENDPOINTS.deploymentDestroy, { apiKey, baseUrl, body: req });
+  return typeof res === "string" ? res : res.deploymentId;
 }

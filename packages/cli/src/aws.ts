@@ -1,6 +1,12 @@
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { SSMClient, GetParameterCommand } from "@aws-sdk/client-ssm";
-import { CloudFormationClient, ListStackResourcesCommand } from "@aws-sdk/client-cloudformation";
+import {
+  CloudFormationClient,
+  ListStackResourcesCommand,
+  DescribeStacksCommand,
+  DeleteStackCommand,
+  waitUntilStackDeleteComplete,
+} from "@aws-sdk/client-cloudformation";
 
 /** Resolve the AWS account id from the active credentials. */
 export async function getAccountId(region: string): Promise<string> {
@@ -77,6 +83,31 @@ export async function listStackLambdas(region: string, stackName: string): Promi
   // Stable, readable order: http first, then crons, then queues.
   const rank: Record<LambdaKind, number> = { http: 0, cron: 1, queue: 2, lambda: 3 };
   return out.sort((a, b) => rank[a.kind] - rank[b.kind] || a.functionName.localeCompare(b.functionName));
+}
+
+/**
+ * Tear a deployed stack down by name — no synth needed, CloudFormation deletes
+ * by stack name. Returns false if there's nothing to delete (no such stack).
+ *
+ * We grab the stack's unique id first and wait on THAT: once deletion finishes
+ * the name no longer resolves, so a name-based waiter can't observe completion.
+ */
+export async function deleteStack(region: string, stackName: string): Promise<boolean> {
+  const cfn = new CloudFormationClient({ region });
+
+  let stackId: string | undefined;
+  try {
+    const desc = await cfn.send(new DescribeStacksCommand({ StackName: stackName }));
+    stackId = desc.Stacks?.[0]?.StackId;
+  } catch (err) {
+    // CloudFormation returns ValidationError for a non-existent stack.
+    if (err instanceof Error && err.name === "ValidationError") return false;
+    throw err;
+  }
+
+  await cfn.send(new DeleteStackCommand({ StackName: stackName }));
+  await waitUntilStackDeleteComplete({ client: cfn, maxWaitTime: 1800 }, { StackName: stackId ?? stackName });
+  return true;
 }
 
 /**

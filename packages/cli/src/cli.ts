@@ -29,7 +29,7 @@ Commands:
 Flags:
   --stage, -s <name>  Deployment stage to target, e.g. dev/staging/prod
                       (overrides config; deploy/synth/diff/destroy/logs/eject)
-  --verbose, -v       Show full CDK/CloudFormation output (deploy/destroy)
+  --verbose, -v       Show full CDK/CloudFormation output (deploy)
   --strict            deploy: fail if any env("...") declared in code has no
                       value set locally/in CI (default: deploy + warn)
   --all               logs: tail every function (multiplexed)
@@ -90,7 +90,7 @@ async function main(): Promise<void> {
       await diff(projectDir, { stage });
       break;
     case "destroy":
-      await destroy(projectDir, { verbose, stage });
+      await destroy(projectDir, { stage });
       break;
     case "logs": {
       // Positionals: an existing directory is the project dir; anything else is

@@ -1,13 +1,10 @@
-import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@laranja/core";
-import { buildAssembly } from "../pipeline.js";
-import { getAccountId } from "../aws.js";
+import { getAccountId, deleteStack } from "../aws.js";
 import { reportSafely } from "../lifecycle.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
-import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
 
-export async function destroy(projectDir: string, opts: { verbose?: boolean; stage?: string } = {}): Promise<void> {
+export async function destroy(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
@@ -24,7 +21,7 @@ export async function destroy(projectDir: string, opts: { verbose?: boolean; sta
 
   // If we're logged in, open a teardown row on the dashboard and report the
   // lifecycle around the delete. The BE owns the REMOVED resource inventory, so
-  // the client only sends the stack identity + status — no IR needed.
+  // the client only sends the stack identity + status — no IR, no synth.
   const apiKey = resolveApiKey();
   let deploymentId: string | undefined;
   if (apiKey) {
@@ -39,15 +36,12 @@ export async function destroy(projectDir: string, opts: { verbose?: boolean; sta
     }
   }
 
-  const { cdkOutDir } = await buildAssembly(projectDir, { region, account, stage: opts.stage });
-  const ioHost = new LaranjaIoHost(opts.verbose);
-  const toolkit = new Toolkit({ ioHost });
+  // No synth, local or remote — CloudFormation deletes the stack by name.
   const sp = ui.spinner("tearing down stack");
-  ioHost.onActivity = opts.verbose ? undefined : makeActivityHandler(sp, "removing");
+  let existed: boolean;
   try {
-    const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
-    await toolkit.destroy(cx, { stacks: { strategy: StackSelectionStrategy.ALL_STACKS } });
-    sp.succeed("destroyed");
+    existed = await deleteStack(region, name);
+    sp.succeed(existed ? "destroyed" : "nothing to destroy (no such stack)");
   } catch (err) {
     sp.fail("destroy failed");
     if (deploymentId) {

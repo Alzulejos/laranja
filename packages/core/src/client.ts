@@ -88,7 +88,15 @@ async function apiRequest<T>(method: "GET" | "POST" | "PATCH", endpoint: string,
     );
   }
 
-  return (await res.json()) as T;
+  // Read defensively: some endpoints return a bare (unquoted) id string — e.g.
+  // destroy — or an empty body, neither of which `res.json()` can parse.
+  const text = await res.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return text as unknown as T;
+  }
 }
 
 /**

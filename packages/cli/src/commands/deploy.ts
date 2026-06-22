@@ -1,12 +1,30 @@
 import path from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { Toolkit, StackSelectionStrategy, StackParameters, BootstrapEnvironments } from "@aws-cdk/toolkit-lib";
-import { envParamName, handlerLabel, loadConfig, resolveApiKey, resolveDeclaredEnv } from "@laranja/core";
-import { buildAssembly, buildRemoteAssembly } from "../pipeline.js";
+import {
+  envParamName,
+  handlerLabel,
+  loadConfig,
+  patchDeployment,
+  postDeploymentResources,
+  resolveApiKey,
+  resolveDeclaredEnv,
+} from "@laranja/core";
+import { buildAssembly, buildRemoteAssembly, type RemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
+import { buildDeployedResources } from "../report.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
 import { LaranjaIoHost, makeActivityHandler } from "../iohost.js";
 import * as ui from "../ui.js";
+
+/** Fire a dashboard report without letting a reporting failure mask the deploy. */
+async function reportSafely(what: string, fn: () => Promise<unknown>): Promise<void> {
+  try {
+    await fn();
+  } catch (err) {
+    ui.warn(`couldn't ${what} to the dashboard (${err instanceof Error ? err.message : String(err)})`);
+  }
+}
 
 export async function deploy(
   projectDir: string,
@@ -39,6 +57,14 @@ export async function deploy(
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
   const where = opts.remote ? "server build" : "build";
   ui.step("📦", where, `${routesLabel} · ${ir.crons.length} crons · ${ir.queues.length} queues → ${lambdaCount} λ`);
+
+  // A server build opened a deployment row at /synth; we report its lifecycle to
+  // the dashboard (STARTED before AWS → SUCCESS/FAILED after). Local builds have
+  // no dashboard deployment, so they skip reporting entirely.
+  const deploymentId = opts.remote ? (built as RemoteAssembly).deploymentId : undefined;
+  if (deploymentId) {
+    await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey!));
+  }
 
   // Resolve the code-discovered env("...") keys from this machine's process.env.
   // Values are passed to CloudFormation as stack Parameters at deploy time (never
@@ -78,11 +104,12 @@ export async function deploy(
     }
   }
 
+  const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
+
   const outputsFile = path.join(projectDir, ".laranja", "outputs.json");
   const sp = ui.spinner("deploying stack");
   ioHost.onActivity = opts.verbose ? undefined : makeActivityHandler(sp);
   try {
-    const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
     await toolkit.deploy(cx, {
       stacks: { strategy: StackSelectionStrategy.ALL_STACKS },
       // Supply env values; unspecified keys keep their previous value on update.
@@ -92,18 +119,31 @@ export async function deploy(
     sp.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     sp.fail("deploy failed");
+    if (deploymentId) {
+      await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey!));
+    }
     throw err;
   }
 
+  let out: Record<string, string> = {};
   if (existsSync(outputsFile)) {
     const outputs = JSON.parse(readFileSync(outputsFile, "utf8")) as Record<string, Record<string, string>>;
-    const out = outputs[stackName] ?? {};
+    out = outputs[stackName] ?? {};
     console.log();
     if (out.HttpUrl) ui.step("🌐", "http", out.HttpUrl);
     if (ir.crons.length) {
       ui.step("⏰", "cron", ir.crons.map((c) => handlerLabel(c)).join(", "));
     }
     if (ir.queues.length) ui.step("📨", "queue", ir.queues.map((q) => q.name).join(", "));
+  }
+
+  // Report the outcome + deployed inventory to the dashboard (success only POSTs
+  // resources, per the lifecycle contract).
+  if (deploymentId) {
+    const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
+    await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey!));
+    await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey!));
+    ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
   }
 
   if (missing.length) {

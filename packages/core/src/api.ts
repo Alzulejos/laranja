@@ -19,14 +19,23 @@ export const API_VERSION = "v1";
 /** Server mounts every route under this prefix (NestJS global prefix + version). */
 export const API_PREFIX = `/api/${API_VERSION}`;
 
-/** Shared endpoint paths, so both sides reference the same strings. */
+/**
+ * Shared endpoint paths, so both sides reference the same strings.
+ *
+ * Deployment reporting is a lifecycle, not a single call: `/synth` opens a
+ * deployment row (`INITIATED`), then the client PATCHes status as it deploys
+ * (`STARTED` → `SUCCESS`/`FAILED`) and POSTs the resource inventory on success.
+ * The `:id` here is the `deploymentId` returned by `/synth`.
+ */
 export const ENDPOINTS = {
   /** GET — verify the API key + return tier/limits (used by `laranja init`). */
   me: `${API_PREFIX}/me`,
-  /** POST — IR in, CloudFormation template (or CDK files) out. */
+  /** POST — IR in, CloudFormation template (or CDK files) out; opens the deployment row. */
   synth: `${API_PREFIX}/synth`,
-  /** POST — report a deploy/destroy outcome for the dashboard timeline. */
-  deployments: `${API_PREFIX}/deployments`,
+  /** PATCH — advance a deployment's status (STARTED before AWS, then SUCCESS/FAILED). */
+  deployment: (id: string) => `${API_PREFIX}/deployment/${id}`,
+  /** POST — report the deployed resource inventory (success only). */
+  deploymentResources: (id: string) => `${API_PREFIX}/deployment/${id}/resources`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -128,63 +137,95 @@ export interface CdkSynthResponse extends SynthResponseBase {
 export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
 
 /* -------------------------------------------------------------------------- */
-/* Deployment reporting                                                       */
+/* Deployment reporting (lifecycle)                                           */
 /* -------------------------------------------------------------------------- */
 
-export type DeploymentStatus = "succeeded" | "failed" | "destroyed";
+/**
+ * A deployment moves through these states. The SERVER owns `INITIATED` (set when
+ * `/synth` opens the row); the CLIENT drives the rest via PATCH. Anything stuck
+ * in `INITIATED`/`STARTED` past a TTL is treated as abandoned by the server.
+ */
+export type DeploymentStatus = "INITIATED" | "STARTED" | "SUCCESS" | "FAILED";
 
 /**
- * A non-fatal issue surfaced during a deploy, reported for dashboard statistics
- * (e.g. "succeeded with 4 warnings"). Distinct from `status` — a deploy with
- * warnings still `succeeded`; we don't invent a third status.
+ * `PATCH /v1/deployment/:id` body sent right after `/synth`, BEFORE touching AWS.
+ * `region` travels ONLY on this transition (it's where the deploy will land).
  */
-export type DeploymentWarningCode = "missing_env_value";
-
-export interface DeploymentWarning {
-  code: DeploymentWarningCode;
-  /**
-   * Affected identifiers for context — e.g. the env var NAMES that had no value.
-   * NEVER values/secrets (the names already travel in the IR; values never do).
-   */
-  keys?: string[];
+export interface DeploymentStartedPatch {
+  status: "STARTED";
+  region: string;
 }
 
-/** Kind of a deployed resource, for dashboard grouping/icons. ("function" = a plain compute fn — provider-neutral; was "lambda".) */
-export type DeployedResourceKind = "http" | "cron" | "queue" | "function";
+/**
+ * `PATCH /v1/deployment/:id` body sent after the AWS deploy settles. No region.
+ * The success handler must be idempotent (a retried PATCH must not error).
+ */
+export interface DeploymentOutcomePatch {
+  status: "SUCCESS" | "FAILED";
+}
+
+/** Every client-driven status PATCH body, discriminated on `status`. */
+export type DeploymentPatch = DeploymentStartedPatch | DeploymentOutcomePatch;
 
 /**
- * A single deployed AWS resource, reported so the dashboard can show an
- * inventory + deep-link to the console (e.g. CloudWatch logs).
+ * Logical resource kind, for dashboard grouping/icons. ("function" = a plain
+ * compute fn — provider-neutral.) For an `http` proxy the logical name is "http".
+ */
+export type DeployedResourceType = "http" | "cron" | "queue" | "function";
+
+/**
+ * How a resource changed in this deploy, derived from the CloudFormation change
+ * set (Add → CREATED, Modify → UPDATED, Remove → REMOVED). Computed against live
+ * AWS state so reports self-heal if one is ever missed.
+ */
+export type DeployedResourceAction = "CREATED" | "REMOVED" | "UPDATED";
+
+/**
+ * Free-form, kind-specific config bag stored on each resource (BE column is
+ * jsonb). Open by design — extra keys are allowed — but two are conventional:
+ * `warnings` for non-fatal per-resource issues (env names only, no values).
+ */
+export interface ResourceMetadata {
+  /** Non-fatal issues affecting this resource — e.g. unpopulated env-var NAMES. */
+  warnings?: string[];
+  [key: string]: unknown;
+}
+
+/**
+ * One LOGICAL laranja resource (not one physical AWS resource) in the deployed
+ * inventory, reported so the dashboard can show an inventory + deep-link to the
+ * console.
  *
- * SECURITY: identifiers ONLY — never env-var values or secrets. ARNs are not
- * credentials, but treat this as tenant-scoped data (per-user authz on read).
+ * SECURITY: identifiers ONLY — never env-var values or secrets. ARNs/URLs are
+ * not credentials, but treat this as tenant-scoped data (per-user authz on read).
  */
 export interface DeployedResource {
-  kind: DeployedResourceKind;
-  /** Physical resource name (Lambda function name, queue name, …). */
+  /** Logical id, e.g. "cleanup", "process-order", or "http" for the proxy. */
   name: string;
-  /** Full ARN, for console deep-links. Reconstructable from account+region+name. */
-  arn?: string;
-  /** CloudWatch log group, for Lambda-backed resources. */
-  logGroup?: string;
+  type: DeployedResourceType;
+  action: DeployedResourceAction;
+  /**
+   * Kind-specific config (cron schedule, queue name/fifo/batchSize, lambda cfg).
+   * MUST be `{}` when there's nothing to report — never `null`. No routes.
+   *
+   * May also carry `warnings: string[]` — non-fatal issues affecting THIS
+   * resource, e.g. the NAMES of env vars that had no value at deploy time. Names
+   * only, never values/secrets. (BE stores `metadata` as jsonb, so no schema
+   * change is needed to add this.)
+   */
+  metadata: ResourceMetadata;
+  /** Primary Lambda function ARN. `null` for REMOVED if unknown. */
+  externalId: string | null;
+  /** For `http`, the Lambda Function URL (no API Gateway). `null` for cron/queue. */
+  externalUrl: string | null;
 }
 
-/** `POST /v1/deployments` body — the outcome of applying/destroying a synth. */
-export interface DeploymentReport {
-  /** From the `SynthResponse`. */
-  deploymentId: string;
-  status: DeploymentStatus;
-  /** Where it was applied (for the dashboard). */
-  account?: string;
-  region?: string;
-  /** CloudFormation outputs (HttpUrl, queue URLs, …) — shown as links. */
-  outputs?: Record<string, string>;
-  /** Inventory of deployed resources (names/ARNs only — no secret values). */
-  resources?: DeployedResource[];
-  /** Non-fatal issues surfaced during the deploy (e.g. unpopulated env vars). */
-  warnings?: DeploymentWarning[];
-  /** Populated when `status` is "failed". */
-  error?: string;
+/**
+ * `POST /v1/deployment/:id/resources` body — the deployed inventory, sent on
+ * SUCCESS only. WRAPPED in an object (a bare array 500s the BE controller).
+ */
+export interface ResourcesReport {
+  resources: DeployedResource[];
 }
 
 /* -------------------------------------------------------------------------- */

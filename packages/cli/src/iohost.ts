@@ -64,7 +64,14 @@ export function makeActivityHandler(sp: Spinner, verb = "deploying"): (a: Resour
     const status = ev.ResourceStatus ?? "";
     const progress = a.progress?.total ? `${a.progress.completed}/${a.progress.total}` : (a.progress?.formatted ?? "");
     if (ev.LogicalResourceId) {
-      sp.update(`${verb} ${progress}  ${dim(`${status} ${ev.LogicalResourceId}`)}`);
+      // Keep the live line to a single terminal row. Long logical ids otherwise
+      // wrap, which breaks the spinner's in-place redraw (it leaves one wrapped
+      // line behind per animation frame). Clip the variable part before styling
+      // so we never cut an ANSI escape mid-sequence.
+      const detail = `${status} ${ev.LogicalResourceId}`;
+      const room = Math.max(12, (process.stdout.columns ?? 80) - verb.length - progress.length - 8);
+      const clipped = detail.length > room ? `${detail.slice(0, room - 1)}…` : detail;
+      sp.update(`${verb} ${progress}  ${dim(clipped)}`);
     }
 
     const icon = ANNOUNCE[ev.ResourceType ?? ""];

@@ -10,6 +10,8 @@ import {
   type MeResponse,
   type SynthRequest,
   type SynthResponse,
+  type DeploymentPatch,
+  type ResourcesReport,
   type ApiError,
   type ApiErrorCode,
 } from "./api.js";
@@ -54,7 +56,7 @@ interface RequestOptions {
   body?: unknown;
 }
 
-async function apiRequest<T>(method: "GET" | "POST", endpoint: string, opts: RequestOptions): Promise<T> {
+async function apiRequest<T>(method: "GET" | "POST" | "PATCH", endpoint: string, opts: RequestOptions): Promise<T> {
   const url = `${opts.baseUrl ?? resolveApiUrl()}${endpoint}`;
 
   let res: Response;
@@ -105,4 +107,32 @@ export function postSynth(
   baseUrl?: string,
 ): Promise<SynthResponse> {
   return apiRequest<SynthResponse>("POST", ENDPOINTS.synth, { apiKey, projectId, baseUrl, body: req });
+}
+
+/**
+ * `PATCH /v1/deployment/:id` — advance a deployment's status. Sent with
+ * `{ status: "STARTED", region }` before touching AWS, then `{ status: "SUCCESS"
+ * | "FAILED" }` once the deploy settles. The server resolves the project from
+ * the API key, so the deployment id (in the URL) is the only context needed.
+ */
+export function patchDeployment(
+  deploymentId: string,
+  body: DeploymentPatch,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<boolean> {
+  return apiRequest<boolean>("PATCH", ENDPOINTS.deployment(deploymentId), { apiKey, baseUrl, body });
+}
+
+/**
+ * `POST /v1/deployment/:id/resources` — report the deployed inventory after a
+ * successful deploy. Body is WRAPPED (`{ resources }`); a bare array 500s the BE.
+ */
+export function postDeploymentResources(
+  deploymentId: string,
+  body: ResourcesReport,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<boolean> {
+  return apiRequest<boolean>("POST", ENDPOINTS.deploymentResources(deploymentId), { apiKey, baseUrl, body });
 }

@@ -10,6 +10,7 @@ import {
 import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@laranja/cdk";
+import { writeResourceTypes } from "./resource-types.js";
 
 export interface Assembly {
   ir: InfraIR;
@@ -50,6 +51,7 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to use the laranja server.');
   }
   const ir = scan({ projectDir, config });
+  writeResourceTypes(projectDir, ir);
   const entries = generateEntries(ir, { projectDir, entryDir });
   const handlers = await bundleEntries(entries, { entryDir, buildDir });
   const assets = computeAssetHashes(handlers);

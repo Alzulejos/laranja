@@ -11,6 +11,7 @@ import { scan } from "@laranja/scanner";
 import { generateEntries } from "@laranja/runtime";
 import { bundleEntries, computeAssetHashes } from "@laranja/cdk";
 import { printPlan } from "../pipeline.js";
+import { writeResourceTypes } from "../resource-types.js";
 
 /**
  * Synth only (no AWS calls): scan -> IR -> POST /synth -> save the returned
@@ -26,6 +27,7 @@ export async function synthCommand(projectDir: string, opts: { stage?: string } 
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to synth on the server.');
   }
   const ir = scan({ projectDir, config });
+  writeResourceTypes(projectDir, ir);
 
   console.log(`Synthesizing "${ir.app.name}" on the server (${resolveApiUrl()})…`);
   printPlan(ir);

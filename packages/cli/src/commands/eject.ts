@@ -2,6 +2,7 @@ import path from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { loadConfig, resolveApiKey, postEject, ApiRequestError } from "@laranja/core";
 import { scan } from "@laranja/scanner";
+import { writeResourceTypes } from "../resource-types.js";
 
 /**
  * Generate a standalone, owned CDK project. The project is synthesized on the
@@ -22,6 +23,7 @@ export async function eject(projectDir: string, opts: { force?: boolean; stage?:
   }
 
   const ir = scan({ projectDir, config });
+  writeResourceTypes(projectDir, ir);
 
   let res;
   try {

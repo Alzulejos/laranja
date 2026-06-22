@@ -9,11 +9,13 @@ import {
   storeAuth,
   ApiRequestError,
 } from "@laranja/core";
+import { generateResourceTypesStub } from "@laranja/scanner";
 import * as ui from "../ui.js";
+import { RESOURCE_TYPES_FILE } from "../resource-types.js";
 
-const TEMPLATE = `import type { LaranjaConfig } from "@laranja/core";
+const TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
 
-const config: LaranjaConfig = {
+const config: TypedLaranjaConfig = {
   name: "my-app",
   // From your laranja dashboard — identifies this project on the server.
   projectId: "",
@@ -53,6 +55,14 @@ export async function init(projectDir: string): Promise<void> {
   } else {
     writeFileSync(file, TEMPLATE);
     console.log(`Created ${CONFIG_FILENAME}.`);
+  }
+
+  // The config imports `TypedLaranjaConfig` from here; seed a permissive stub so
+  // the import resolves before the first deploy/synth regenerates it with real ids.
+  const typesFile = path.join(projectDir, RESOURCE_TYPES_FILE);
+  if (!existsSync(typesFile)) {
+    writeFileSync(typesFile, generateResourceTypesStub());
+    console.log(`Created ${RESOURCE_TYPES_FILE}.`);
   }
 
   // Handshake: validate the API key against the server before the user deploys.

@@ -5,7 +5,10 @@ const app = express();
 app.use(express.json());
 
 app.get("/", (_req, res) => {
-  res.json({ service: "express-codefirst", message: "Hello from laranja 🍊" });
+  res.json({
+    service: "express-codefirst",
+    message: "Hello from laranja 🍊 3.0",
+  });
 });
 
 app.get("/health", (_req, res) => res.json({ ok: true }));

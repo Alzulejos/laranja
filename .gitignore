@@ -1,5 +1,6 @@
 node_modules/
 dist/
+*.tsbuildinfo
 .laranja/
 cdk.out/
 # Ejected CDK projects from `laranja eject` in our examples (throwaway here;

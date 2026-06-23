@@ -22,8 +22,10 @@ jobs:
 
       - run: npm ci
 
-      - name: Build all packages
-        run: npm run build
+      - name: Build all packages (clean — avoid stale tsc -b incremental emit)
+        run: |
+          rm -rf packages/*/dist packages/*/*.tsbuildinfo
+          npm run build
 
       - name: Rewrite entry points to dist (CI-only)
         run: node scripts/prepare-publish.mjs

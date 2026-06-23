@@ -1,7 +1,7 @@
 import path from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig, resolveApiKey, postEject, ApiRequestError } from "@laranja/core";
-import { scan } from "@laranja/scanner";
+import { loadConfig, resolveApiKey, postEject, ApiRequestError } from "@alzulejos/laranja-core";
+import { scan } from "@alzulejos/laranja-scanner";
 import { writeResourceTypes } from "../resource-types.js";
 
 /**

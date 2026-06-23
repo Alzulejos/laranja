@@ -4,7 +4,7 @@ exports[`full output snapshot > mixed app + cron + queue generates a stable set 
 [
   {
     "contents": "import app from "../../src/app";
-import { createHttpHandler } from "@laranja/runtime";
+import { createHttpHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createHttpHandler(app);
 ",
@@ -14,7 +14,7 @@ export const handler = createHttpHandler(app);
   },
   {
     "contents": "import { refreshCache } from "../../src/jobs";
-import { createScheduledHandler } from "@laranja/runtime";
+import { createScheduledHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createScheduledHandler(refreshCache);
 ",
@@ -24,7 +24,7 @@ export const handler = createScheduledHandler(refreshCache);
   },
   {
     "contents": "import { Jobs } from "../../src/jobs";
-import { createQueueHandler } from "@laranja/runtime";
+import { createQueueHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createQueueHandler(Jobs, "sendEmails");
 ",

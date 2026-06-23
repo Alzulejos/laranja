@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { postDestroy, type DestroyRequest } from "@laranja/core";
+import { postDestroy, type DestroyRequest } from "@alzulejos/laranja-core";
 
 afterEach(() => vi.unstubAllGlobals());
 

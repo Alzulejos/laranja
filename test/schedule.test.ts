@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { rate, every, parseScheduleString, assertSchedule } from "@laranja/core";
+import { rate, every, parseScheduleString, assertSchedule } from "@alzulejos/laranja-core";
 
 describe("rate()", () => {
   test("builds a structured, provider-neutral schedule (pluralization deferred to render time)", () => {

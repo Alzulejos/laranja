@@ -1,4 +1,4 @@
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@alzulejos/laranja-core";
 
 // Workers-only: the team's HTTP API lives elsewhere. laranja deploys only the
 // @Cron / @Queue handlers — no proxy Lambda, no Function URL.

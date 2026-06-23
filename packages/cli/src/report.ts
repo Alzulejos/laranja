@@ -16,7 +16,7 @@ import {
   type InfraIR,
   type DeployedResource,
   type ResourceMetadata,
-} from "@laranja/core";
+} from "@alzulejos/laranja-core";
 
 export interface BuildResourcesArgs {
   ir: InfraIR;

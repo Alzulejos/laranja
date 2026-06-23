@@ -8,8 +8,8 @@ import {
   loadStoredApiKey,
   storeAuth,
   ApiRequestError,
-} from "@laranja/core";
-import { generateResourceTypesStub } from "@laranja/scanner";
+} from "@alzulejos/laranja-core";
+import { generateResourceTypesStub } from "@alzulejos/laranja-scanner";
 import * as ui from "../ui.js";
 import { RESOURCE_TYPES_FILE } from "../resource-types.js";
 

@@ -1,4 +1,4 @@
-import { Cron, Queue, rate } from "@laranja/decorators";
+import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))

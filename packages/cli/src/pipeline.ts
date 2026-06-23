@@ -6,10 +6,10 @@ import {
   postDiff,
   ApiRequestError,
   type InfraIR,
-} from "@laranja/core";
-import { scan } from "@laranja/scanner";
-import { generateEntries } from "@laranja/runtime";
-import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@laranja/cdk";
+} from "@alzulejos/laranja-core";
+import { scan } from "@alzulejos/laranja-scanner";
+import { generateEntries } from "@alzulejos/laranja-runtime";
+import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@alzulejos/laranja-assembly";
 import { writeResourceTypes } from "./resource-types.js";
 import { step } from "./diagnostics.js";
 

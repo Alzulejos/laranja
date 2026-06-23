@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from "vitest";
-import { scan, generateResourceTypes, generateResourceTypesStub, resourceIds } from "@laranja/scanner";
+import { scan, generateResourceTypes, generateResourceTypesStub, resourceIds } from "@alzulejos/laranja-scanner";
 import { makeProject, cleanupProjects, cfg } from "./helpers.js";
 
 afterEach(cleanupProjects);
@@ -9,11 +9,11 @@ describe("resource types generation", () => {
     const dir = makeProject({
       "src/app.ts": `
         import express from "express";
-        import { http } from "@laranja/decorators";
+        import { http } from "@alzulejos/laranja-decorators";
         export default http(express());
       `,
       "src/jobs.ts": `
-        import { cron, queue, rate } from "@laranja/decorators";
+        import { cron, queue, rate } from "@alzulejos/laranja-decorators";
         export async function cleanup() {}
         export async function work() {}
         cron(rate(1, "hour"), cleanup);
@@ -27,7 +27,7 @@ describe("resource types generation", () => {
   test("generateResourceTypes emits a ResourceId union of the real ids", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { queue } from "@laranja/decorators";
+        import { queue } from "@alzulejos/laranja-decorators";
         export async function work() {}
         queue({ name: "orders" }, work);
       `,

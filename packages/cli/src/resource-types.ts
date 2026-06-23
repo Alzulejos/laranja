@@ -1,7 +1,7 @@
 import path from "node:path";
 import { writeFileSync } from "node:fs";
-import type { InfraIR } from "@laranja/core";
-import { generateResourceTypes } from "@laranja/scanner";
+import type { InfraIR } from "@alzulejos/laranja-core";
+import { generateResourceTypes } from "@alzulejos/laranja-scanner";
 
 /** Filename of the generated, committed resource-id types at the project root. */
 export const RESOURCE_TYPES_FILE = "laranja.types.ts";

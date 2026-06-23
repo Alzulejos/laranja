@@ -1,7 +1,7 @@
 import { describe, test, expect } from "vitest";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadConfig } from "@laranja/core";
+import { loadConfig } from "@alzulejos/laranja-core";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const example = (name: string) => path.join(here, "..", "examples", name);

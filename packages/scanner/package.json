@@ -1,14 +1,18 @@
 {
-  "name": "@laranja/scanner",
-  "version": "0.0.0",
+  "name": "@alzulejos/laranja-scanner",
+  "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "dependencies": {
-    "@laranja/core": "*",
+    "@alzulejos/laranja-core": "0.1.0",
     "ts-morph": "^23.0.0"
   }
 }

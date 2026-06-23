@@ -4,7 +4,7 @@
  *   tsx packages/scanner/src/dev-scan.ts <project-dir>
  */
 import path from "node:path";
-import { loadConfig } from "@laranja/core";
+import { loadConfig } from "@alzulejos/laranja-core";
 import { scan } from "./scan.js";
 
 async function main() {

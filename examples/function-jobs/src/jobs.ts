@@ -1,4 +1,4 @@
-import { cron, queue, rate } from "@laranja/decorators";
+import { cron, queue, rate } from "@alzulejos/laranja-decorators";
 
 // Plain exported functions — no class needed. The function name becomes the
 // resource id. Each registration below is read statically by the scanner.

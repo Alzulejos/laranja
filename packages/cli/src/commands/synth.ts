@@ -6,10 +6,10 @@ import {
   resolveApiKey,
   resolveApiUrl,
   ApiRequestError,
-} from "@laranja/core";
-import { scan } from "@laranja/scanner";
-import { generateEntries } from "@laranja/runtime";
-import { bundleEntries, computeAssetHashes } from "@laranja/cdk";
+} from "@alzulejos/laranja-core";
+import { scan } from "@alzulejos/laranja-scanner";
+import { generateEntries } from "@alzulejos/laranja-runtime";
+import { bundleEntries, computeAssetHashes } from "@alzulejos/laranja-assembly";
 import { printPlan } from "../pipeline.js";
 import { writeResourceTypes } from "../resource-types.js";
 

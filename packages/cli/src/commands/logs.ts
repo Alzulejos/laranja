@@ -3,7 +3,7 @@ import {
   StartLiveTailCommand,
   FilterLogEventsCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
-import { loadConfig, stackName } from "@laranja/core";
+import { loadConfig, stackName } from "@alzulejos/laranja-core";
 import { getAccountId, listStackLambdas, type DeployedLambda, type LambdaKind } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 import * as ui from "../ui.js";

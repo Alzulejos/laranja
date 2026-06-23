@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdtempSync } from "node:fs";
 import { App, Stack } from "aws-cdk-lib";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
-import type { HandlerAssetHashes } from "@laranja/core";
+import type { HandlerAssetHashes } from "@alzulejos/laranja-core";
 import type { BundledHandler } from "./bundle.js";
 
 /**

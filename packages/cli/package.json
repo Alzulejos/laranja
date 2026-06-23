@@ -1,14 +1,18 @@
 {
-  "name": "@laranja/cli",
-  "version": "0.0.0",
+  "name": "@alzulejos/laranja",
+  "version": "0.1.0",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "bin": {
-    "laranja": "dist/cli.js"
+    "laranja": "./dist/cli.js"
   },
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": ["dist"],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
     "@aws-cdk/toolkit-lib": "^1.29.0",
@@ -16,9 +20,9 @@
     "@aws-sdk/client-cloudwatch-logs": "^3.658.0",
     "@aws-sdk/client-ssm": "^3.658.0",
     "@aws-sdk/client-sts": "^3.658.0",
-    "@laranja/cdk": "*",
-    "@laranja/core": "*",
-    "@laranja/runtime": "*",
-    "@laranja/scanner": "*"
+    "@alzulejos/laranja-assembly": "0.1.0",
+    "@alzulejos/laranja-core": "0.1.0",
+    "@alzulejos/laranja-runtime": "0.1.0",
+    "@alzulejos/laranja-scanner": "0.1.0"
   }
 }

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { HandlerRef, InfraIR } from "@laranja/core";
+import type { HandlerRef, InfraIR } from "@alzulejos/laranja-core";
 
 /**
  * A generated Lambda entry file. These tiny shims are what the bundler points at:
@@ -75,7 +75,7 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
       fileName: "http.ts",
       handlerExport: "handler",
       contents: `${appImport}
-import { createHttpHandler } from "@laranja/runtime";
+import { createHttpHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createHttpHandler(app);
 `,
@@ -92,7 +92,7 @@ export const handler = createHttpHandler(app);
       fileName: `cron-${safe(cron.id)}.ts`,
       handlerExport: "handler",
       contents: `${importLine}
-import { createScheduledHandler } from "@laranja/runtime";
+import { createScheduledHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createScheduledHandler(${factoryArgs});
 `,
@@ -109,7 +109,7 @@ export const handler = createScheduledHandler(${factoryArgs});
       fileName: `queue-${safe(queue.id)}.ts`,
       handlerExport: "handler",
       contents: `${importLine}
-import { createQueueHandler } from "@laranja/runtime";
+import { createQueueHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createQueueHandler(${factoryArgs});
 `,

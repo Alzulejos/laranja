@@ -1,6 +1,6 @@
 import { describe, test, expect } from "vitest";
-import { generateEntries, type GeneratedEntry } from "@laranja/runtime";
-import type { InfraIR } from "@laranja/core";
+import { generateEntries, type GeneratedEntry } from "@alzulejos/laranja-runtime";
+import type { InfraIR } from "@alzulejos/laranja-core";
 
 // Synthetic, fixed paths keep the generated import specifiers (and thus snapshots)
 // deterministic across machines — codegen emits paths relative to the entry dir.

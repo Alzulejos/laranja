@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@alzulejos/laranja-core";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 /** Temp projects live INSIDE the repo so Vitest's fs allowlist can transform configs. */

@@ -1,5 +1,5 @@
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 app.use(express.json());

@@ -35,7 +35,8 @@ export const ENDPOINTS = {
   /** PATCH — advance a deployment's status (STARTED before AWS, then SUCCESS/FAILED). */
   deployment: (id: string) => `${API_PREFIX}/deployment/${id}`,
   /** POST — report the deployed resource inventory (success only). */
-  deploymentResources: (id: string) => `${API_PREFIX}/deployment/${id}/resources`,
+  deploymentResources: (id: string) =>
+    `${API_PREFIX}/deployment/${id}/resources`,
   /** POST — open a teardown deployment row (destroy has no `/synth`). */
   deploymentDestroy: `${API_PREFIX}/deployment/destory`,
   /** POST — read-only synth (returns a template, creates NO deployment row). */
@@ -64,7 +65,13 @@ export interface Limits {
 export interface MeResponse {
   userId: string;
   displayName: string;
-  projectId: string;
+  projects: Project[];
+}
+
+interface Project {
+  id: string;
+  name: string;
+  framework: string;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -158,7 +165,9 @@ export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
  * CloudFormation synth response but with NO `deploymentId` (nothing is
  * persisted). Fields are optional to mirror the server's `Partial<SynthResponse>`.
  */
-export type DiffResponse = Partial<Pick<CloudFormationSynthResponse, "stackName" | "template" | "assets">>;
+export type DiffResponse = Partial<
+  Pick<CloudFormationSynthResponse, "stackName" | "template" | "assets">
+>;
 
 /* -------------------------------------------------------------------------- */
 /* Deployment reporting (lifecycle)                                           */

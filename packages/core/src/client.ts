@@ -8,6 +8,8 @@
 import {
   ENDPOINTS,
   type MeResponse,
+  type CreateProjectRequest,
+  type CreateProjectResponse,
   type SynthRequest,
   type SynthResponse,
   type DiffResponse,
@@ -105,6 +107,19 @@ async function apiRequest<T>(method: "GET" | "POST" | "PATCH", endpoint: string,
  */
 export function getMe(apiKey: string, baseUrl?: string): Promise<MeResponse> {
   return apiRequest<MeResponse>("GET", ENDPOINTS.me, { apiKey, baseUrl });
+}
+
+/**
+ * `POST /v1/project` — create a project (name only) from the CLI and get back
+ * its server id. User-scoped: authed by the API key, no `x-project-id`.
+ */
+export function createProject(
+  name: string,
+  apiKey: string,
+  baseUrl?: string,
+): Promise<CreateProjectResponse> {
+  const body: CreateProjectRequest = { name };
+  return apiRequest<CreateProjectResponse>("POST", ENDPOINTS.project, { apiKey, baseUrl, body });
 }
 
 /**

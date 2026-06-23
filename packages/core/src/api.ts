@@ -28,8 +28,10 @@ export const API_PREFIX = `/api/${API_VERSION}`;
  * The `:id` here is the `deploymentId` returned by `/synth`.
  */
 export const ENDPOINTS = {
-  /** GET — verify the API key + return tier/limits (used by `laranja init`). */
+  /** GET — verify the API key + return the user and their projects (used by `laranja init`). */
   me: `${API_PREFIX}/me`,
+  /** POST — create a project (name only); returns the new project. Used by `laranja init`. */
+  project: `${API_PREFIX}/project`,
   /** POST — IR in, CloudFormation template (or CDK files) out; opens the deployment row. */
   synth: `${API_PREFIX}/synth`,
   /** PATCH — advance a deployment's status (STARTED before AWS, then SUCCESS/FAILED). */
@@ -68,10 +70,21 @@ export interface MeResponse {
   projects: Project[];
 }
 
-interface Project {
+export interface Project {
   id: string;
   name: string;
-  framework: string;
+  /** Detected framework (e.g. "express"); null until a deploy reveals it. */
+  framework: string | null;
+}
+
+/** `POST /v1/project` body — create a project from the CLI (`laranja init`). */
+export interface CreateProjectRequest {
+  name: string;
+}
+
+/** `POST /v1/project` response — the new project's id (write it to config). */
+export interface CreateProjectResponse {
+  id: string;
 }
 
 /* -------------------------------------------------------------------------- */

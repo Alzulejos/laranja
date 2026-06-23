@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { resolveDeclaredEnv, envParamName } from "@laranja/core";
+import { resolveDeclaredEnv, envParamName } from "@alzulejos/laranja-core";
 
 describe("resolveDeclaredEnv", () => {
   test("splits declared keys into resolved values and missing names", () => {

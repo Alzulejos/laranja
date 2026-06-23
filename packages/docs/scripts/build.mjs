@@ -148,4 +148,4 @@ mkdirSync(distDir, { recursive: true });
 writeFileSync(join(distDir, "index.js"), js);
 writeFileSync(join(distDir, "index.d.ts"), dts);
 
-console.log(`@laranja/docs: built ${pages.length} pages → dist/index.js`);
+console.log(`@alzulejos/laranja-docs: built ${pages.length} pages → dist/index.js`);

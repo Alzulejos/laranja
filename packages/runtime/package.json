@@ -1,19 +1,25 @@
 {
-  "name": "@laranja/runtime",
-  "version": "0.0.0",
+  "name": "@alzulejos/laranja-runtime",
+  "version": "0.1.1",
   "type": "module",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
   "sideEffects": false,
   "exports": {
     ".": "./src/index.ts"
   },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "dependencies": {
     "@codegenie/serverless-express": "^4.1.6",
-    "@laranja/core": "*"
+    "@alzulejos/laranja-core": "0.1.1"
   },
   "devDependencies": {
-    "@laranja/scanner": "*",
+    "@alzulejos/laranja-scanner": "0.1.1",
     "@types/aws-lambda": "^8.10.145",
     "esbuild": "^0.28.1"
   }

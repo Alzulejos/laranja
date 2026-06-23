@@ -8,8 +8,8 @@
 import path from "node:path";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { build } from "esbuild";
-import { loadConfig } from "@laranja/core";
-import { scan } from "@laranja/scanner";
+import { loadConfig } from "@alzulejos/laranja-core";
+import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "./codegen.js";
 
 async function main() {

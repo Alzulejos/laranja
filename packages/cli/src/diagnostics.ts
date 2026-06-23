@@ -10,7 +10,7 @@
  */
 import path from "node:path";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { authDir, loadConfig, resolveApiKey, postReport } from "@laranja/core";
+import { authDir, loadConfig, resolveApiKey, postReport } from "@alzulejos/laranja-core";
 
 interface RunState {
   command: string;

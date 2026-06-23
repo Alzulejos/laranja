@@ -1,4 +1,4 @@
-import { authFilePath, clearAuth } from "@laranja/core";
+import { authFilePath, clearAuth } from "@alzulejos/laranja-core";
 import * as ui from "../ui.js";
 
 /**

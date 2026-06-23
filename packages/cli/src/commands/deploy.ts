@@ -9,7 +9,7 @@ import {
   postDeploymentResources,
   resolveApiKey,
   resolveDeclaredEnv,
-} from "@laranja/core";
+} from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";

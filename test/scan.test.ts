@@ -1,5 +1,5 @@
 import { describe, test, expect, afterEach } from "vitest";
-import { scan } from "@laranja/scanner";
+import { scan } from "@alzulejos/laranja-scanner";
 import { makeProject, cleanupProjects, cfg } from "./helpers.js";
 
 afterEach(cleanupProjects);
@@ -8,7 +8,7 @@ describe("class / decorator style", () => {
   test("discovers @Cron and @Queue as method-style handlers", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { Cron, Queue, rate } from "@laranja/decorators";
+        import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
         export class Jobs {
           @Cron(rate(5, "minutes"))
           async refreshCache() {}
@@ -39,7 +39,7 @@ describe("class / decorator style", () => {
   test("honors an explicit @Cron id and folds every()", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { Cron, every } from "@laranja/decorators";
+        import { Cron, every } from "@alzulejos/laranja-decorators";
         export class Jobs {
           @Cron({ schedule: every("day"), id: "nightly" })
           async run() {}
@@ -55,7 +55,7 @@ describe("function / marker style", () => {
   test("discovers cron() and queue() as function-style handlers", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, queue, rate } from "@laranja/decorators";
+        import { cron, queue, rate } from "@alzulejos/laranja-decorators";
         export async function refreshCache() {}
         export async function sendEmails() {}
         cron(rate(5, "minutes"), refreshCache);
@@ -81,7 +81,7 @@ describe("function / marker style", () => {
   test("resolves aliased imports", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron as schedule, rate } from "@laranja/decorators";
+        import { cron as schedule, rate } from "@alzulejos/laranja-decorators";
         export async function tick() {}
         schedule(rate(1, "hour"), tick);
       `,
@@ -93,7 +93,7 @@ describe("function / marker style", () => {
   test("rejects a handler that is not exported", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, rate } from "@laranja/decorators";
+        import { cron, rate } from "@alzulejos/laranja-decorators";
         async function notExported() {}
         cron(rate(5, "minutes"), notExported);
       `,
@@ -107,7 +107,7 @@ describe("http app resolution", () => {
     const dir = makeProject({
       "src/app.ts": `
         import express from "express";
-        import { http } from "@laranja/decorators";
+        import { http } from "@alzulejos/laranja-decorators";
         const app = express();
         app.get("/", (_req, res) => res.json({ ok: true }));
         export default http(app);
@@ -122,7 +122,7 @@ describe("http app resolution", () => {
     const dir = makeProject({
       "src/app.ts": `
         import express from "express";
-        import { http } from "@laranja/decorators";
+        import { http } from "@alzulejos/laranja-decorators";
         export const api = http(express());
       `,
     });
@@ -145,7 +145,7 @@ describe("http app resolution", () => {
   test("http: false disables HTTP even with jobs present", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, rate } from "@laranja/decorators";
+        import { cron, rate } from "@alzulejos/laranja-decorators";
         export async function tick() {}
         cron(rate(1, "hour"), tick);
       `,
@@ -159,7 +159,7 @@ describe("http app resolution", () => {
     const dir = makeProject({
       "src/app.ts": `
         import express from "express";
-        import { http } from "@laranja/decorators";
+        import { http } from "@alzulejos/laranja-decorators";
         export const a = http(express());
         export const b = http(express());
       `,
@@ -171,7 +171,7 @@ describe("http app resolution", () => {
     const dir = makeProject({
       "src/app.ts": `
         import express from "express";
-        import { http } from "@laranja/decorators";
+        import { http } from "@alzulejos/laranja-decorators";
         const app = http(express());
       `,
     });
@@ -191,7 +191,7 @@ describe("nothing to deploy", () => {
 describe("compute config", () => {
   const jobs = {
     "src/jobs.ts": `
-      import { Cron, every } from "@laranja/decorators";
+      import { Cron, every } from "@alzulejos/laranja-decorators";
       export class Jobs {
         @Cron({ schedule: every("day"), id: "cleanup" })
         async cleanup() {}
@@ -257,7 +257,7 @@ describe("queue & cron config", () => {
   const makeJobs = () =>
     makeProject({
       "src/jobs.ts": `
-        import { cron, queue, rate } from "@laranja/decorators";
+        import { cron, queue, rate } from "@alzulejos/laranja-decorators";
         export async function process() {}
         export async function onDead() {}
         export async function reconcile() {}
@@ -354,7 +354,7 @@ describe("queue & cron config", () => {
   test("rejects two queues that share a name", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { queue } from "@laranja/decorators";
+        import { queue } from "@alzulejos/laranja-decorators";
         export async function a() {}
         export async function b() {}
         queue({ name: "orders" }, a);
@@ -369,7 +369,7 @@ describe("env() discovery", () => {
   test("collects env('LITERAL') names — deduped, sorted, location-independent", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, rate, env } from "@laranja/decorators";
+        import { cron, rate, env } from "@alzulejos/laranja-decorators";
         const region = env("AWS_REGION");
         export async function refreshCache() {
           // a call buried in a handler body still counts (pure source analysis)
@@ -387,7 +387,7 @@ describe("env() discovery", () => {
   test("is alias-aware and ignores dynamic (non-literal) names", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, rate, env as readEnv } from "@laranja/decorators";
+        import { cron, rate, env as readEnv } from "@alzulejos/laranja-decorators";
         const name = "DYNAMIC";
         export async function job() {
           const a = readEnv("STRIPE_KEY");
@@ -404,7 +404,7 @@ describe("env() discovery", () => {
   test("ignores an env() that isn't laranja's helper", () => {
     const dir = makeProject({
       "src/jobs.ts": `
-        import { cron, rate } from "@laranja/decorators";
+        import { cron, rate } from "@alzulejos/laranja-decorators";
         function env(_n: string) { return ""; } // local shadow, not the helper
         export async function job() {
           return env("NOT_LARANJA");

@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "dependencies": {
-    "@laranja/core": "*",
+    "@alzulejos/laranja-core": "*",
     "express": "^4.19.2"
   },
   "devDependencies": {

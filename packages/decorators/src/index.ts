@@ -8,10 +8,10 @@
  */
 
 // Re-export the schedule builders + types so users import them alongside @Cron.
-export { rate, every } from "@laranja/core";
-export type { RateUnit, Schedule, ScheduleInput } from "@laranja/core";
+export { rate, every } from "@alzulejos/laranja-core";
+export type { RateUnit, Schedule, ScheduleInput } from "@alzulejos/laranja-core";
 
-import type { ScheduleInput } from "@laranja/core";
+import type { ScheduleInput } from "@alzulejos/laranja-core";
 
 export interface CronOptions {
   /** A `rate(...)`/`every(...)` builder result, or a raw provider string. */

@@ -17,6 +17,7 @@
     "destroy:cf": "tsx packages/cli/src/cli.ts destroy examples/express-codefirst",
     "log:cf": "tsx packages/cli/src/cli.ts logs examples/express-codefirst",
     "typecheck": "tsc -b",
+    "build": "tsc -b && npm run build --workspace packages/docs",
     "test": "vitest run",
     "test:watch": "vitest"
   },

@@ -1,4 +1,4 @@
-import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@laranja/core";
+import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@alzulejos/laranja-core";
 import { getAccountId, deleteStack } from "../aws.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";

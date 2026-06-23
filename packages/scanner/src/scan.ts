@@ -13,7 +13,7 @@ import {
   type LaranjaConfig,
   type QueueIR,
   type ResourceConfig,
-} from "@laranja/core";
+} from "@alzulejos/laranja-core";
 import { getPropertyInitializer, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
 
@@ -371,11 +371,11 @@ function collectFromMethod(
 }
 
 /** Modules whose `cron`/`queue` exports are laranja's function-style markers. */
-const REGISTRATION_MODULES = new Set(["@laranja/decorators", "@laranja/core"]);
+const REGISTRATION_MODULES = new Set(["@alzulejos/laranja-decorators", "@alzulejos/laranja-core"]);
 
 /**
  * Map a file's local identifiers to the laranja marker they're bound to, honoring
- * aliases — e.g. `import { cron as schedule } from "@laranja/decorators"`.
+ * aliases — e.g. `import { cron as schedule } from "@alzulejos/laranja-decorators"`.
  */
 function registrationImports(sf: SourceFile): Map<string, "cron" | "queue"> {
   const map = new Map<string, "cron" | "queue">();

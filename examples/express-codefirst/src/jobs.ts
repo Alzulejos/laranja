@@ -1,4 +1,4 @@
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 // A function-style worker living alongside the HTTP app — both declared in code.
 export async function refreshCache() {

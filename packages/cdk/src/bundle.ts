@@ -1,7 +1,7 @@
 import path from "node:path";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { build } from "esbuild";
-import type { GeneratedEntry } from "@laranja/runtime";
+import type { GeneratedEntry } from "@alzulejos/laranja-runtime";
 
 /** A bundled Lambda handler ready to become a CDK asset. */
 export interface BundledHandler {

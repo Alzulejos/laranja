@@ -1,4 +1,4 @@
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@alzulejos/laranja-core";
 
 const config: LaranjaConfig = {
   name: "express-minimal",

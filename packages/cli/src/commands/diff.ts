@@ -1,5 +1,5 @@
 import { Toolkit, NonInteractiveIoHost, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
-import { loadConfig, resolveApiKey } from "@laranja/core";
+import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildDiffAssembly } from "../pipeline.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";

@@ -1,6 +1,6 @@
 import { Node, SyntaxKind } from "ts-morph";
 import type { ObjectLiteralExpression } from "ts-morph";
-import { rate, every, parseScheduleString, type RateUnit, type Schedule } from "@laranja/core";
+import { rate, every, parseScheduleString, type RateUnit, type Schedule } from "@alzulejos/laranja-core";
 
 /** Resolve a literal AST node to a plain JS value, or undefined if not a literal. */
 export function literalValue(node: Node | undefined): string | number | boolean | undefined {

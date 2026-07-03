@@ -546,3 +546,112 @@ describe("nest framework", () => {
     expect(ir.http!.routes).toEqual([]);
   });
 });
+
+describe("Nest-style @Cron / @Interval (swap-the-import compatibility)", () => {
+  test("translates a bare node-cron string to an AWS cron schedule", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron("0 12 * * *")
+          async noon() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "cron", expression: "0 12 * * ? *", dialect: "aws" });
+  });
+
+  test("folds CronExpression.* members", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron, CronExpression } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron(CronExpression.EVERY_5_MINUTES)
+          async tick() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "cron", expression: "*/5 * * * ? *", dialect: "aws" });
+  });
+
+  test("reads Nest's second-arg options (name -> id, timeZone -> timezone)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron("0 3 * * *", { name: "nightly", timeZone: "Europe/Lisbon" })
+          async run() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0]).toMatchObject({ id: "nightly", timezone: "Europe/Lisbon" });
+  });
+
+  test("@Interval(ms) becomes a rate schedule", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Interval } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Interval(300000)
+          async poll() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "rate", value: 5, unit: "minute" });
+  });
+
+  test("rejects sub-minute schedules loudly", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron, CronExpression } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron(CronExpression.EVERY_30_SECONDS)
+          async tooOften() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) })).toThrow(/sub-minute/);
+  });
+
+  test("rejects @Timeout with a clear message", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Timeout } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Timeout(5000)
+          async once() {}
+        }
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) })).toThrow(/no serverless equivalent/);
+  });
+});

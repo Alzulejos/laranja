@@ -5,6 +5,8 @@ export type { NestAppLike, NestBootstrap } from "./nest-http.js";
 export { createScheduledHandler } from "./scheduled.js";
 export { createQueueHandler } from "./queue.js";
 export type { QueueConsumer } from "./queue.js";
+export { createNestScheduledHandler, createNestQueueHandler } from "./nest-worker.js";
+export type { NestContextLike, NestContextFactory } from "./nest-worker.js";
 
 // Build-time codegen (not used inside the Lambda, but co-located because it
 // generates code that imports the factories above).

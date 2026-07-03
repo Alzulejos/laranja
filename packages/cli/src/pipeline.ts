@@ -12,7 +12,7 @@ import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@alzulejos/laranja-assembly";
 import { writeResourceTypes } from "./resource-types.js";
-import { resolveNestHttpEntry } from "./nest-build.js";
+import { resolveNestCompiledEntry } from "./nest-build.js";
 import { step } from "./diagnostics.js";
 
 export interface Assembly {
@@ -59,13 +59,14 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   const ir = scan({ projectDir, config });
   writeResourceTypes(projectDir, ir);
   step("bundle handlers");
-  // Nest: point the HTTP shim at the user's COMPILED bootstrap (metadata intact),
-  // not their .ts source. Express bundles straight from source (httpEntry undefined).
-  const httpEntry =
-    ir.app.framework === "nest" && ir.http
-      ? resolveNestHttpEntry(projectDir, ir.http.handlerEntry)
-      : undefined;
-  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry });
+  // Nest: point every shim at the user's COMPILED output (DI metadata intact), not
+  // their .ts source — the HTTP bootstrap, the workers(AppModule) module, and each
+  // class-based provider. Express bundles straight from source (all undefined).
+  const isNest = ir.app.framework === "nest";
+  const httpEntry = isNest && ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
+  const workersEntry = isNest && ir.workers ? resolveNestCompiledEntry(projectDir, ir.workers.handlerEntry) : undefined;
+  const resolveCompiled = isNest ? (file: string) => resolveNestCompiledEntry(projectDir, file) : undefined;
+  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, workersEntry, resolveCompiled });
   const handlers = await bundleEntries(entries, {
     entryDir,
     buildDir,

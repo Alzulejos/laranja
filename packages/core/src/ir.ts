@@ -107,6 +107,18 @@ export interface HttpIR {
   compute?: ComputeConfig;
 }
 
+/**
+ * The `workers(AppModule)` marker: the Nest module the worker Lambdas build a
+ * standalone DI context from, so class-based @Cron/@Queue providers resolve their
+ * injected dependencies. Absent for Express (no DI) and workers-free projects.
+ */
+export interface WorkersIR {
+  /** Project-relative module that exports `workers(AppModule)`. */
+  handlerEntry: string;
+  /** Named export within that module (e.g. "default" or "jobs"). */
+  appExport: string;
+}
+
 /** @Cron(...) / cron(...) -> scheduled trigger -> its own Lambda. */
 export type CronIR = HandlerRef & {
   /** Stable logical id, used for the CDK construct + function name. */
@@ -161,6 +173,8 @@ export interface InfraIR {
   };
   /** Absent when there's no `http()` marker — a workers-only deployment. */
   http?: HttpIR;
+  /** Nest DI graph for class-based workers; absent for Express / function-only apps. */
+  workers?: WorkersIR;
   crons: CronIR[];
   queues: QueueIR[];
   /**

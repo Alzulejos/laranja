@@ -155,3 +155,110 @@ describe("full output snapshot", () => {
     expect(entries.map((e) => ({ id: e.id, kind: e.kind, fileName: e.fileName, contents: e.contents }))).toMatchSnapshot();
   });
 });
+
+describe("nest worker shim (DI)", () => {
+  const nestOpts = {
+    projectDir,
+    entryDir,
+    workersEntry: "/proj/dist/app.module.js",
+    resolveCompiled: (file: string) => "/proj/dist/" + file.replace(/^src\//, "").replace(/\.ts$/, ".js"),
+  };
+  const nestIR = (overrides: Partial<InfraIR> = {}) =>
+    baseIR({
+      app: { name: "app", framework: "nest", stage: "dev", entry: "src/main.ts" },
+      workers: { handlerEntry: "src/app.module.ts", appExport: "default" },
+      ...overrides,
+    });
+
+  test("class-based @Cron resolves the provider through NestFactory + DI", () => {
+    const entries = generateEntries(
+      nestIR({
+        crons: [
+          {
+            style: "method",
+            id: "Tasks-sweep",
+            schedule: "rate(5 minutes)",
+            file: "src/tasks/tasks.service.ts",
+            className: "TasksService",
+            method: "sweep",
+            source: "src/tasks/tasks.service.ts:9",
+          },
+        ],
+      }),
+      nestOpts,
+    );
+    const shim = byId(entries, "Tasks-sweep");
+    expect(shim.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
+    expect(shim.contents).toContain(`import workersModule from "../../dist/app.module";`);
+    expect(shim.contents).toContain(`import { TasksService } from "../../dist/tasks/tasks.service";`);
+    expect(shim.contents).toContain(`createNestScheduledHandler(`);
+    expect(shim.contents).toContain(`() => NestFactory.createApplicationContext(workersModule)`);
+    expect(shim.contents).toContain(`"sweep"`);
+  });
+
+  test("class-based @Queue uses the DI queue factory", () => {
+    const entries = generateEntries(
+      nestIR({
+        queues: [
+          {
+            style: "method",
+            id: "Mailer-send",
+            name: "emails",
+            file: "src/mailer.ts",
+            className: "Mailer",
+            method: "send",
+            source: "src/mailer.ts:5",
+          },
+        ],
+      }),
+      nestOpts,
+    );
+    const shim = byId(entries, "Mailer-send");
+    expect(shim.contents).toContain(`createNestQueueHandler(`);
+    expect(shim.contents).toContain(`import { Mailer } from "../../dist/mailer";`);
+  });
+
+  test("a named workers export is imported by alias", () => {
+    const entries = generateEntries(
+      nestIR({
+        workers: { handlerEntry: "src/app.module.ts", appExport: "jobs" },
+        crons: [
+          {
+            style: "method",
+            id: "Tasks-sweep",
+            schedule: "rate(5 minutes)",
+            file: "src/tasks.service.ts",
+            className: "TasksService",
+            method: "sweep",
+            source: "src/tasks.service.ts:9",
+          },
+        ],
+      }),
+      nestOpts,
+    );
+    expect(byId(entries, "Tasks-sweep").contents).toContain(
+      `import { jobs as workersModule } from "../../dist/app.module";`,
+    );
+  });
+
+  test("a function-style cron in a Nest app stays plain (no DI)", () => {
+    const entries = generateEntries(
+      nestIR({
+        crons: [
+          {
+            style: "function",
+            id: "refresh",
+            schedule: "rate(5 minutes)",
+            file: "src/jobs.ts",
+            exportName: "refresh",
+            source: "src/jobs.ts:3",
+          },
+        ],
+      }),
+      nestOpts,
+    );
+    const shim = byId(entries, "refresh");
+    expect(shim.contents).toContain(`createScheduledHandler(refresh)`);
+    expect(shim.contents).not.toContain("NestFactory");
+  });
+});

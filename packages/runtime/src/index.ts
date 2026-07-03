@@ -1,5 +1,7 @@
 export { createHttpHandler } from "./http.js";
 export type { FrameworkApp } from "./http.js";
+export { createNestHttpHandler } from "./nest-http.js";
+export type { NestAppLike, NestBootstrap } from "./nest-http.js";
 export { createScheduledHandler } from "./scheduled.js";
 export { createQueueHandler } from "./queue.js";
 export type { QueueConsumer } from "./queue.js";

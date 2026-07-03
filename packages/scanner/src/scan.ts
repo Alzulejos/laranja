@@ -16,6 +16,7 @@ import {
 } from "@alzulejos/laranja-core";
 import { getPropertyInitializer, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
+import { collectNestRoutes } from "./nest-routes.js";
 
 export interface ScanInput {
   projectDir: string;
@@ -83,6 +84,8 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
 
     if (framework === "express") {
       collectExpressRoutes(rel, sf, routes);
+    } else if (framework === "nest") {
+      collectNestRoutes(rel, sf, routes);
     }
     collectHttpMarkers(rel, sf, httpMarkers);
   }

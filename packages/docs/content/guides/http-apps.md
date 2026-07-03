@@ -8,7 +8,7 @@ order: 1
 
 laranja deploys your whole HTTP app as a single proxy Lambda behind a public
 [Function URL](../reference/what-gets-deployed.md#http-app--proxy-lambda--function-url).
-laranja supports **Express** today; **NestJS support is coming**.
+laranja supports **Express** and **NestJS**.
 
 ## Declaring your app (the `http()` marker)
 
@@ -34,6 +34,45 @@ export default http(app);          // or: export const api = http(app);
 has no runtime effect. That's all you need: every route you register is served by
 the deployed proxy. The marker is the only way to declare an HTTP app — there's
 exactly one per project, and it must be exported so the scanner can find it.
+
+## NestJS
+
+Nest apps work the same way, with one difference: a Nest app only exists after an
+async `NestFactory.create(...)`, so instead of a ready app object you wrap your
+**bootstrap function** and have it `return` the app:
+
+```ts
+// src/main.ts
+import { NestFactory } from "@nestjs/core";
+import { http } from "@laranja/decorators";
+import { AppModule } from "./app.module";
+
+export async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  // configure however you like — pipes, guards, middleware, raw body, cookies…
+  app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+  await app.listen(process.env.PORT ?? 3000);  // fine to keep for local dev
+  return app;                                  // ← the only change laranja needs
+}
+
+// Run locally with `npm run start`; skipped when laranja imports this file.
+if (require.main === module) void bootstrap();
+
+export default http(bootstrap);   // wrap the factory, not a module
+```
+
+laranja runs your `bootstrap()` verbatim, so every pipe, guard, and piece of
+middleware you configure is preserved — nothing is re-derived. You keep your
+normal Nest project (`@nestjs/platform-express`); no laranja-specific
+restructuring.
+
+Two things to know:
+
+- **Build before you deploy.** laranja packages your compiled output (`nest build`
+  → `dist/`), because Nest's dependency injection relies on the decorator
+  metadata your own TypeScript build emits. Run your build first (a stale/missing
+  `dist/` fails the deploy with a clear message).
+- **Use the default Express platform.** The Fastify adapter isn't supported yet.
 
 ## Routing, middleware, and `STAGE`
 

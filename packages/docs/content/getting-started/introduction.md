@@ -11,9 +11,9 @@ application — an Express app, some scheduled jobs, some queue consumers — an
 laranja deploys it to **your own AWS account**. There is no infrastructure
 project to maintain, no YAML to write, and no cloud console to click through.
 
-> laranja supports **Express** today. **NestJS support is coming** — and because
-> your app is reduced to a framework-neutral description internally, it'll work
-> without changing how you write your code.
+> laranja supports **Express** and **NestJS** — and because your app is reduced to
+> a framework-neutral description internally, more frameworks can follow without
+> changing how you write your code.
 
 ## The problem
 
@@ -88,7 +88,7 @@ consumer — all in your own account, named deterministically.
 
 | Capability | How you declare it |
 |---|---|
-| HTTP API | An Express app, marked with the [`http()`](../reference/decorators-and-markers.md#http) marker. NestJS coming. |
+| HTTP API | An Express or NestJS app, marked with the [`http()`](../reference/decorators-and-markers.md#http) marker. |
 | Scheduled jobs | [`@Cron`](../reference/decorators-and-markers.md#cron) (class) or [`cron()`](../reference/decorators-and-markers.md#cron-marker) (function) |
 | Queue consumers | [`@Queue`](../reference/decorators-and-markers.md#queue) (class) or [`queue()`](../reference/decorators-and-markers.md#queue-marker) (function) |
 | Per-environment deploys | [Stages](../guides/stages-and-environments.md) (`--stage`) |

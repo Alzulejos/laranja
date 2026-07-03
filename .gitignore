@@ -1,0 +1,17 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.laranja/
+cdk.out/
+# Ejected CDK projects from `laranja eject` in our examples (throwaway here;
+# for real users it's their project to commit).
+examples/*/infra/
+# Generated resource-id types from deploy/synth in our examples (real users
+# commit theirs; here it's regenerated noise).
+examples/*/laranja.types.ts
+*.log
+.DS_Store
+.env
+.env.*
+
+.npmrc

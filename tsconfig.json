@@ -1,0 +1,11 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/decorators" },
+    { "path": "packages/scanner" },
+    { "path": "packages/runtime" },
+    { "path": "packages/cdk" },
+    { "path": "packages/cli" }
+  ]
+}

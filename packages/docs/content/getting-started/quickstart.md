@@ -19,7 +19,8 @@ npm install -D @laranja/cli typescript
 npm install @laranja/decorators
 ```
 
-> laranja supports **Express** today. **NestJS support is coming.**
+> laranja supports **Express** and **NestJS**. For Nest, see the
+> [HTTP apps guide](../guides/http-apps.md#nestjs).
 
 ## 2. Write your app
 

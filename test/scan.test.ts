@@ -493,3 +493,56 @@ describe("env() discovery", () => {
     expect(ir.envKeys).toEqual([]);
   });
 });
+
+describe("nest framework", () => {
+  test("detects the http() marker and discovers routes from Nest controllers", () => {
+    const dir = makeProject({
+      "src/main.ts": `
+        import { http } from "@alzulejos/laranja-decorators";
+        export async function bootstrap() { return {} as any; }
+        export default http(bootstrap);
+      `,
+      "src/app.controller.ts": `
+        import { Controller, Get } from "@nestjs/common";
+        @Controller()
+        export class AppController {
+          @Get() getHello() { return "hi"; }
+        }
+      `,
+      "src/users.controller.ts": `
+        import { Controller, Get, Post } from "@nestjs/common";
+        @Controller("users")
+        export class UsersController {
+          @Get() findAll() {}
+          @Get(":id") findOne() {}
+          @Post() create() {}
+        }
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+
+    expect(ir.app.framework).toBe("nest");
+    expect(ir.http).toBeDefined();
+    expect(ir.http).toMatchObject({ handlerEntry: "src/main.ts", appExport: "default" });
+
+    const routes = ir.http!.routes.map((r) => `${r.method} ${r.path}`).sort();
+    expect(routes).toEqual(["GET /", "GET /users", "GET /users/:id", "POST /users"].sort());
+  });
+
+  test("does not treat a plain Express app.get() as a Nest route", () => {
+    const dir = makeProject({
+      "src/main.ts": `
+        import { http } from "@alzulejos/laranja-decorators";
+        export async function bootstrap() { return {} as any; }
+        export default http(bootstrap);
+      `,
+      // No @Controller here — an express-style call must be ignored under nest.
+      "src/other.ts": `
+        const app: any = {};
+        app.get("/legacy", () => {});
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+    expect(ir.http!.routes).toEqual([]);
+  });
+});

@@ -142,8 +142,15 @@ const app = express();
 export default http(app);          // or: export const api = http(app);
 ```
 
-It returns the app untouched — purely a static marker. Omit it for a
+It returns its argument untouched — purely a static marker. Omit it for a
 [workers-only](../guides/http-apps.md#workers-only-deployments) deployment.
+
+For **NestJS**, wrap your async `bootstrap` factory (which `return`s the app)
+instead of an app instance — see [HTTP apps → NestJS](../guides/http-apps.md#nestjs):
+
+```ts
+export default http(bootstrap);    // bootstrap: () => Promise<INestApplication>
+```
 
 ---
 

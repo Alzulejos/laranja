@@ -12,6 +12,7 @@ import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@alzulejos/laranja-assembly";
 import { writeResourceTypes } from "./resource-types.js";
+import { resolveNestHttpEntry } from "./nest-build.js";
 import { step } from "./diagnostics.js";
 
 export interface Assembly {
@@ -58,8 +59,19 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   const ir = scan({ projectDir, config });
   writeResourceTypes(projectDir, ir);
   step("bundle handlers");
-  const entries = generateEntries(ir, { projectDir, entryDir });
-  const handlers = await bundleEntries(entries, { entryDir, buildDir });
+  // Nest: point the HTTP shim at the user's COMPILED bootstrap (metadata intact),
+  // not their .ts source. Express bundles straight from source (httpEntry undefined).
+  const httpEntry =
+    ir.app.framework === "nest" && ir.http
+      ? resolveNestHttpEntry(projectDir, ir.http.handlerEntry)
+      : undefined;
+  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry });
+  const handlers = await bundleEntries(entries, {
+    entryDir,
+    buildDir,
+    framework: ir.app.framework,
+    projectDir,
+  });
   const assets = computeAssetHashes(handlers);
 
   return { projectId: config.projectId, ir, handlers, assets, cdkOutDir, region: env.region ?? config.region };

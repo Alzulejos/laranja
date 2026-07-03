@@ -23,6 +23,13 @@ export interface GenerateEntriesOptions {
   projectDir: string;
   /** Absolute path to the dir the entry files will be written to. */
   entryDir: string;
+  /**
+   * Absolute path the HTTP shim should import instead of `<projectDir>/<http.handlerEntry>`.
+   * Used for Nest: the shim imports the user's COMPILED bootstrap (e.g.
+   * `dist/main.js`, which carries the DI metadata their build emitted) rather than
+   * the `.ts` source. Ignored for the worker shims.
+   */
+  httpEntry?: string;
 }
 
 /** Build an import specifier from `fromDir` to a source file, posix-style, no extension. */
@@ -60,24 +67,30 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   const entries: GeneratedEntry[] = [];
 
   // HTTP proxy: one Lambda wrapping the whole app. Absent for workers-only apps.
+  // Express exports a ready app instance (createHttpHandler(app)); Nest exports an
+  // async bootstrap factory that returns the app (createNestHttpHandler(bootstrap)),
+  // and its shim imports the COMPILED bootstrap via `opts.httpEntry`.
   if (ir.http) {
-    const httpTarget = path.join(opts.projectDir, ir.http.handlerEntry);
+    const isNest = ir.app.framework === "nest";
+    const local = isNest ? "bootstrap" : "app";
+    const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
+    const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
     const httpSpec = importSpecifier(opts.entryDir, httpTarget);
     const appImport =
       ir.http.appExport === "default"
-        ? `import app from "${httpSpec}";`
-        : ir.http.appExport === "app"
-          ? `import { app } from "${httpSpec}";`
-          : `import { ${ir.http.appExport} as app } from "${httpSpec}";`;
+        ? `import ${local} from "${httpSpec}";`
+        : ir.http.appExport === local
+          ? `import { ${local} } from "${httpSpec}";`
+          : `import { ${ir.http.appExport} as ${local} } from "${httpSpec}";`;
     entries.push({
       id: "http",
       kind: "http",
       fileName: "http.ts",
       handlerExport: "handler",
       contents: `${appImport}
-import { createHttpHandler } from "@alzulejos/laranja-runtime";
+import { ${factory} } from "@alzulejos/laranja-runtime";
 
-export const handler = createHttpHandler(app);
+export const handler = ${factory}(${local});
 `,
     });
   }

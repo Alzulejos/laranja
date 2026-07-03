@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-runtime",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -16,10 +16,10 @@
   },
   "dependencies": {
     "@codegenie/serverless-express": "^4.1.6",
-    "@alzulejos/laranja-core": "0.0.8"
+    "@alzulejos/laranja-core": "0.0.9"
   },
   "devDependencies": {
-    "@alzulejos/laranja-scanner": "0.0.8",
+    "@alzulejos/laranja-scanner": "0.0.9",
     "@types/aws-lambda": "^8.10.145",
     "esbuild": "^0.28.1"
   }

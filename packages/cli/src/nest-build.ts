@@ -41,14 +41,15 @@ function resolveBuildDirs(projectDir: string): { sourceRoot: string; outDir: str
 }
 
 /**
- * Map the source HTTP entry the scanner found to the compiled file the user's
- * build produced, and return its absolute path. Works for both a plain `tsc`
- * output tree and a webpacked single `dist/main.js` (same path either way).
+ * Map a source entry the scanner found (the HTTP bootstrap, the workers module, or
+ * a provider file) to the compiled file the user's build produced, and return its
+ * absolute path. Works for both a plain `tsc` output tree and a webpacked single
+ * `dist/main.js` (same path either way).
  *
  * Throws an actionable error if the compiled file is missing — the user must build
  * (`npm run build` / `nest build`) before deploying, so the DI metadata exists.
  */
-export function resolveNestHttpEntry(projectDir: string, sourceEntry: string): string {
+export function resolveNestCompiledEntry(projectDir: string, sourceEntry: string): string {
   const { sourceRoot, outDir } = resolveBuildDirs(projectDir);
   // src/main.ts -> main.ts -> dist/main.js
   const relFromSource = path.relative(sourceRoot, sourceEntry);

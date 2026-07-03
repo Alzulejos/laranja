@@ -36,6 +36,15 @@ export async function sendEmail(body: unknown) {
 queue({ name: "emails", batchSize: 10 }, sendEmail);
 ```
 
+## NestJS
+
+`@Queue` works on a Nest provider with injected dependencies. As with
+[cron jobs](./cron-jobs.md#nestjs), laranja resolves the consumer through your
+DI container, so declare your module once with the
+[`workers()`](../reference/decorators-and-markers.md#workers) marker
+(`export default workers(AppModule)`) and deploy your compiled `dist/` output.
+Standalone `queue()` functions don't need it.
+
 ## Options
 
 | Option | Default | Description |

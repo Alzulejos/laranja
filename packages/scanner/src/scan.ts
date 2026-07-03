@@ -4,6 +4,7 @@ import { Project, Node } from "ts-morph";
 import type { ClassDeclaration, MethodDeclaration, SourceFile } from "ts-morph";
 import {
   assertSchedule,
+  intervalToSchedule,
   type ComputeConfig,
   type CronIR,
   type Framework,
@@ -14,7 +15,7 @@ import {
   type QueueIR,
   type ResourceConfig,
 } from "@alzulejos/laranja-core";
-import { getPropertyInitializer, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
+import { getPropertyInitializer, literalValue, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
 import { collectNestRoutes } from "./nest-routes.js";
 
@@ -62,7 +63,8 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const crons: CronIR[] = [];
   const queues: QueueIR[] = [];
   const routes: HttpRoute[] = [];
-  const httpMarkers: HttpMarker[] = [];
+  const httpMarkers: CallMarker[] = [];
+  const workerMarkers: CallMarker[] = [];
   const envKeys = new Set<string>();
 
   for (const sf of project.getSourceFiles()) {
@@ -87,7 +89,8 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     } else if (framework === "nest") {
       collectNestRoutes(rel, sf, routes);
     }
-    collectHttpMarkers(rel, sf, httpMarkers);
+    collectCallMarkers(rel, sf, "http", httpMarkers);
+    collectCallMarkers(rel, sf, "workers", workerMarkers);
   }
 
   // The HTTP app is declared solely by the code `http()` marker. One marker → an
@@ -110,6 +113,33 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
       `Nothing to deploy: no HTTP app (wrap and export your app with http(app)) ` +
         `and no @Cron/@Queue or cron()/queue() handlers were found.`,
     );
+  }
+
+  // The workers() marker names the Nest module we build a DI context from, so each
+  // class-based (@Cron/@Queue on a provider) worker resolves through real DI instead
+  // of `new`. One marker per project.
+  if (workerMarkers.length > 1) {
+    throw new Error(
+      `Found ${workerMarkers.length} workers() markers (${workerMarkers
+        .map((m) => m.source)
+        .join(", ")}). There can be only one workers module per project.`,
+    );
+  }
+  const workerMarker = workerMarkers[0];
+  const workers = workerMarker
+    ? { handlerEntry: workerMarker.file, appExport: workerMarker.appExport }
+    : undefined;
+
+  // Nest resolves method-style workers through DI, which needs that module. (Plain
+  // function-style cron()/queue() handlers don't — they're standalone functions.)
+  if (framework === "nest" && !workers) {
+    const needsDi = [...crons, ...queues].find((h) => h.style === "method");
+    if (needsDi) {
+      throw new Error(
+        `${needsDi.source}: a Nest @Cron/@Queue on a class needs its dependency-injection graph. ` +
+          `Export it once with workers(AppModule), e.g. \`export default workers(AppModule)\`.`,
+      );
+    }
   }
 
   // Validate `resources` keys against the resources we actually found, then merge
@@ -140,6 +170,7 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   return {
     app: { name: config.name, framework, provider, stage, entry: http?.handlerEntry },
     http,
+    workers,
     crons,
     queues,
     // STAGE is always available at runtime, overridable via explicit env.
@@ -339,23 +370,36 @@ function collectFromMethod(
 
     if (name === "Cron") {
       const where = loc(rel, dec);
-      const argNode = dec.getArguments()[0];
+      const args = dec.getArguments();
+      const argNode = args[0];
 
-      // @Cron(<schedule>) or @Cron({ schedule, id })
+      // One decorator name, two call shapes:
+      //   laranja:        @Cron(<schedule>)            @Cron({ schedule, id })
+      //   @nestjs/schedule: @Cron(<expr>, { name, timeZone })  (expr = string | CronExpression)
       let scheduleNode: Node | undefined = argNode;
       let explicitId: string | undefined;
+      let timezone: string | undefined;
       if (argNode && Node.isObjectLiteralExpression(argNode)) {
         scheduleNode = getPropertyInitializer(argNode, "schedule");
         const idInit = getPropertyInitializer(argNode, "id");
-        const idVal = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
-        explicitId = idVal;
+        explicitId = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
+      } else {
+        // Nest's options object is the SECOND argument: name -> id, timeZone -> timezone.
+        const optNode = args[1];
+        if (optNode && Node.isObjectLiteralExpression(optNode)) {
+          const nameInit = getPropertyInitializer(optNode, "name");
+          if (nameInit && Node.isStringLiteral(nameInit)) explicitId = nameInit.getLiteralText();
+          const tzInit = getPropertyInitializer(optNode, "timeZone");
+          if (tzInit && Node.isStringLiteral(tzInit)) timezone = tzInit.getLiteralText();
+        }
       }
 
-      const schedule = resolveScheduleNode(scheduleNode);
+      const schedule = resolveScheduleNode(scheduleNode, where);
       if (!schedule) {
         throw new Error(
           `@Cron at ${where}: could not resolve a valid static schedule. ` +
-            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
+            `Use rate(n, unit), every(unit), a "rate(...)"/"cron(...)" string, ` +
+            `a node-cron expression, or CronExpression.* with literal arguments.`,
         );
       }
       assertSchedule(schedule, where);
@@ -364,11 +408,40 @@ function collectFromMethod(
         style: "method",
         id: explicitId ?? `${className}-${methodName}`,
         schedule,
+        ...(timezone ? { timezone } : {}),
         file: rel,
         className,
         method: methodName,
         source: loc(rel, method),
       });
+    }
+
+    if (name === "Interval") {
+      const where = loc(rel, dec);
+      const args = dec.getArguments();
+      // @Interval(ms) or @Interval("name", ms) — Nest's signature.
+      const hasName = args.length >= 2;
+      const explicitId = hasName && Node.isStringLiteral(args[0]) ? args[0].getLiteralText() : undefined;
+      const ms = literalValue(hasName ? args[1] : args[0]);
+      if (typeof ms !== "number") {
+        throw new Error(`@Interval at ${where}: the interval must be a numeric millisecond literal.`);
+      }
+      crons.push({
+        style: "method",
+        id: explicitId ?? `${className}-${methodName}`,
+        schedule: intervalToSchedule(ms, where),
+        file: rel,
+        className,
+        method: methodName,
+        source: loc(rel, method),
+      });
+    }
+
+    if (name === "Timeout") {
+      throw new Error(
+        `@Timeout at ${loc(rel, dec)}: one-shot @Timeout jobs have no serverless equivalent ` +
+          `(they fire once relative to a process start that doesn't exist on Lambda). Use @Cron or @Interval.`,
+      );
     }
 
     if (name === "Queue") {
@@ -474,11 +547,12 @@ function collectFromRegistrations(
         const idInit = getPropertyInitializer(optNode, "id");
         explicitId = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
       }
-      const schedule = resolveScheduleNode(scheduleNode);
+      const schedule = resolveScheduleNode(scheduleNode, where);
       if (!schedule) {
         throw new Error(
           `cron() at ${where}: could not resolve a valid static schedule. ` +
-            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
+            `Use rate(n, unit), every(unit), a "rate(...)"/"cron(...)" string, ` +
+            `a node-cron expression, or CronExpression.* with literal arguments.`,
         );
       }
       assertSchedule(schedule, where);
@@ -507,31 +581,32 @@ function collectFromRegistrations(
   });
 }
 
-/** A discovered `http(app)` marker: the file it lives in and the export it's bound to. */
-interface HttpMarker {
+/** A discovered call-marker (`http(app)` / `workers(AppModule)`): its file + bound export. */
+interface CallMarker {
   file: string;
   appExport: string;
   source: string;
 }
 
-/** Local identifiers in this file bound to laranja's `http` marker (alias-aware). */
-function httpMarkerNames(sf: SourceFile): Set<string> {
+/** Local identifiers in this file bound to a given laranja marker (alias-aware). */
+function markerNames(sf: SourceFile, marker: string): Set<string> {
   const names = new Set<string>();
   for (const imp of sf.getImportDeclarations()) {
     if (!REGISTRATION_MODULES.has(imp.getModuleSpecifierValue())) continue;
     for (const named of imp.getNamedImports()) {
-      if (named.getName() === "http") names.add(named.getAliasNode()?.getText() ?? "http");
+      if (named.getName() === marker) names.add(named.getAliasNode()?.getText() ?? marker);
     }
   }
   return names;
 }
 
 /**
- * Discover `http(app)` markers. The marker must be bound to an export so the shim
- * can import it — either `export default http(app)` or `export const x = http(app)`.
+ * Discover a call-marker (`http(app)` / `workers(AppModule)`). The marker must be
+ * bound to an export so the shim can import it — either `export default m(x)` or
+ * `export const y = m(x)`.
  */
-function collectHttpMarkers(rel: string, sf: SourceFile, markers: HttpMarker[]): void {
-  const names = httpMarkerNames(sf);
+function collectCallMarkers(rel: string, sf: SourceFile, marker: string, markers: CallMarker[]): void {
+  const names = markerNames(sf, marker);
   if (names.size === 0) return;
 
   sf.forEachDescendant((node) => {
@@ -548,14 +623,14 @@ function collectHttpMarkers(rel: string, sf: SourceFile, markers: HttpMarker[]):
     }
     if (parent && Node.isVariableDeclaration(parent)) {
       if (!parent.getVariableStatement()?.isExported()) {
-        throw new Error(`http() at ${where}: the app must be exported, e.g. \`export const app = http(app)\`.`);
+        throw new Error(`${marker}() at ${where}: the value must be exported, e.g. \`export const x = ${marker}(...)\`.`);
       }
       markers.push({ file: rel, appExport: parent.getName(), source: where });
       return;
     }
     throw new Error(
-      `http() at ${where}: wrap and export the app, e.g. \`export default http(app)\` ` +
-        `or \`export const app = http(app)\`.`,
+      `${marker}() at ${where}: wrap and export it, e.g. \`export default ${marker}(...)\` ` +
+        `or \`export const x = ${marker}(...)\`.`,
     );
   });
 }

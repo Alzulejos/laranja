@@ -117,6 +117,11 @@ const config: LaranjaConfig = {
 With no marker, only your [`@Cron`](./cron-jobs.md) / [`@Queue`](./queues.md)
 handlers are deployed — no HTTP proxy, no Function URL.
 
+For a **workers-only Nest** app, there's no `http(bootstrap)` to build the DI
+container from, so declare your module with the
+[`workers()`](../reference/decorators-and-markers.md#workers) marker instead
+(`export default workers(AppModule)`) — see [Cron jobs → NestJS](./cron-jobs.md#nestjs).
+
 ## Related
 
 - [What gets deployed](../reference/what-gets-deployed.md)

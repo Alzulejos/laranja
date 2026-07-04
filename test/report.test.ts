@@ -75,6 +75,20 @@ describe("buildDeployedResources", () => {
     });
   });
 
+  it("stores the structured schedule plus a ready-to-display description on cron metadata", () => {
+    const ir = makeIr({
+      http: undefined,
+      crons: [
+        { style: "function", file: "src/jobs.ts", exportName: "sweep", source: "src/jobs.ts:1", id: "sweep", schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws" } },
+      ],
+    });
+    const [cron] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    // The FE reads `description` directly; the structured schedule is kept alongside it.
+    expect(cron.metadata).toEqual({
+      schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws", description: "Every minute" },
+    });
+  });
+
   it("surfaces missing env keys as per-resource metadata.warnings", () => {
     const ir = makeIr();
     const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: ["STRIPE_KEY", "DB_URL"] });

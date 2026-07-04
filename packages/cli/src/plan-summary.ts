@@ -1,4 +1,4 @@
-import type { InfraIR } from "@alzulejos/laranja-core";
+import { describeSchedule, type InfraIR } from "@alzulejos/laranja-core";
 import * as ui from "./ui.js";
 
 /**
@@ -52,7 +52,7 @@ function entitiesFromIr(ir: InfraIR): Entity[] {
     });
   }
   for (const c of ir.crons) {
-    out.push({ kind: "Cron", name: c.id, detail: "Lambda + EventBridge rule", prefixes: [`Cron${idKey(c.id)}`] });
+    out.push({ kind: "Cron", name: c.id, detail: describeSchedule(c.schedule), prefixes: [`Cron${idKey(c.id)}`] });
   }
   for (const q of ir.queues) {
     out.push({

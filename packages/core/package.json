@@ -10,6 +10,9 @@
   "files": [
     "dist"
   ],
+  "dependencies": {
+    "cronstrue": "^3.24.0"
+  },
   "publishConfig": {
     "registry": "https://npm.pkg.github.com"
   }

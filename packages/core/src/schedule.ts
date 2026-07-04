@@ -12,6 +12,8 @@
  * `@Cron(rate(5, "minutes"))` at scan time without executing user code.
  */
 
+import cronstrue from "cronstrue";
+
 /** Units accepted by the `rate()` builder (singular or plural, for ergonomics). */
 export type RateUnit = "minute" | "minutes" | "hour" | "hours" | "day" | "days";
 
@@ -87,5 +89,74 @@ export function assertSchedule(s: Schedule, where: string): void {
   }
   if (!s.expression.trim()) {
     throw new Error(`Invalid schedule at ${where}: empty cron expression.`);
+  }
+}
+
+/**
+ * Remap one AWS day-of-week field back to standard Unix numbering. AWS uses 1-7
+ * with 1=Sunday; cronstrue (like Unix cron) uses 0-6 with 0=Sunday — so numeric
+ * tokens shift down by one. Only the value/range segment is remapped; a trailing
+ * `/step` is a count, not a day, and passes through. Names (MON..SUN) pass through.
+ * Mirrors the inverse of `translateDow` in nest-schedule.ts.
+ */
+function awsDowToStandard(field: string): string {
+  if (field === "*" || field === "?") return "*";
+  return field
+    .split(",")
+    .map((part) =>
+      part
+        .split("/")
+        .map((seg, i) =>
+          i === 0
+            ? seg
+                .split("-")
+                .map((t) => {
+                  const n = Number(t);
+                  return /^\d+$/.test(t) && n >= 1 && n <= 7 ? String(n - 1) : t;
+                })
+                .join("-")
+            : seg,
+        )
+        .join("/"),
+    )
+    .join(",");
+}
+
+/**
+ * Convert laranja's stored AWS EventBridge cron (`min hour dom month dow [year]`,
+ * with `?` placeholders and AWS day-of-week numbering) into a standard 5-field
+ * Unix expression (`*` placeholders, 0=Sunday) that cronstrue understands. The
+ * inverse of the lowering `nestCronToSchedule` performs. Returns the input
+ * untouched for anything that isn't 5- or 6-field, so the caller can fall back.
+ */
+function awsCronToStandard(expr: string): string {
+  const parts = expr.trim().split(/\s+/);
+  if (parts.length !== 5 && parts.length !== 6) return expr;
+  const [minute, hour, dom, month, dow] = parts; // parts[5] (year) is dropped
+  return [minute, hour, dom === "?" ? "*" : dom, month, awsDowToStandard(dow)].join(" ");
+}
+
+/**
+ * Human-readable description of a Schedule — the single source of truth for how a
+ * schedule is shown to a user (the CLI `plan` table and the dashboard both call
+ * this, so the wording never drifts). `rate` renders structurally; `cron` is
+ * normalized from our AWS dialect to standard Unix cron and handed to cronstrue.
+ * Anything cronstrue can't parse falls back to the raw expression, so we never
+ * show a misleading label.
+ *
+ * @example describeSchedule({ kind: "rate", value: 5, unit: "minute" }) // "Every 5 minutes"
+ * @example describeSchedule({ kind: "cron", expression: "* * * * ? *", dialect: "aws" }) // "Every minute"
+ */
+export function describeSchedule(schedule: Schedule): string {
+  if (schedule.kind === "rate") {
+    return schedule.value === 1
+      ? `Every ${schedule.unit}`
+      : `Every ${schedule.value} ${schedule.unit}s`;
+  }
+  const standard = awsCronToStandard(schedule.expression);
+  try {
+    return cronstrue.toString(standard, { throwExceptionOnParseError: true, verbose: false });
+  } catch {
+    return schedule.expression;
   }
 }

@@ -11,6 +11,7 @@
  */
 
 import {
+  describeSchedule,
   handlerLabel,
   handlerName,
   type InfraIR,
@@ -64,7 +65,9 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
       name: cron.id,
       type: "cron",
       action: "CREATED",
-      metadata: meta({ schedule: cron.schedule }),
+      // Store a ready-to-display label alongside the structured schedule so the
+      // dashboard shows "Every minute" without re-deriving it from the cron string.
+      metadata: meta({ schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) } }),
       externalId: arn(handlerLabel(cron)),
       externalUrl: null,
     });

@@ -1,13 +1,5 @@
-import path from "node:path";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import {
-  CONFIG_FILENAME,
-  getMe,
-  createProject,
-  ApiRequestError,
-  apiErrorMessage,
-  type ProjectGroups,
-} from "@alzulejos/laranja-core";
+import { readFileSync, writeFileSync } from "node:fs";
+import { createProject, type ProjectGroups } from "@alzulejos/laranja-core";
 import * as ui from "./ui.js";
 
 /** Sentinel value for the "create a new project" choice in the picker. */
@@ -96,62 +88,4 @@ export async function resolveProjectId(
   if (!name) return undefined;
   const created = await createProject(name, apiKey);
   return { id: created.id, name, created: true };
-}
-
-/** True if laranja.config.ts already carries a non-empty projectId. */
-function isLinked(file: string): boolean {
-  if (!existsSync(file)) return false;
-  const m = readFileSync(file, "utf8").match(/projectId:\s*"([^"]*)"/);
-  return Boolean(m && m[1]);
-}
-
-/**
- * Ensure this directory is linked to a dashboard project before a deploy/plan.
- * If the config already has a projectId, this is a no-op. Otherwise it shows the
- * same picker `laranja init` uses — pick an existing project or create a new one
- * — and writes the chosen id + name into laranja.config.ts, so the subsequent
- * `loadConfig` succeeds (that's also why linking runs BEFORE load: an unlinked
- * config has an empty `name`, which `loadConfig` rejects).
- *
- * Requires an interactive TTY; in a non-interactive shell (CI) it does nothing
- * and lets the normal "set projectId"/"name is required" error surface instead
- * of hanging on a prompt no one can answer.
- */
-export async function ensureProjectLinked(
-  projectDir: string,
-  apiKey: string,
-): Promise<void> {
-  const file = path.join(projectDir, CONFIG_FILENAME);
-  if (isLinked(file)) return;
-  if (!existsSync(file)) return; // no config at all — let loadConfig raise its own error
-  if (!process.stdin.isTTY) return; // CI: fall through to the clear config error
-
-  let me;
-  try {
-    me = await getMe(apiKey);
-  } catch (err) {
-    if (err instanceof ApiRequestError) {
-      throw new Error(apiErrorMessage("Handshake failed", err));
-    }
-    throw err;
-  }
-
-  ui.warn(`This directory isn't linked to a project yet — let's connect it.`);
-  const resolved = await resolveProjectId(apiKey, me.projects);
-  if (!resolved) {
-    throw new Error(
-      `No project selected — set "projectId" in ${CONFIG_FILENAME} or run \`laranja init\`.`,
-    );
-  }
-
-  writeProjectId(file, resolved.id);
-  writeName(file, resolved.name);
-  if (resolved.created) {
-    console.log(
-      `  ${ui.green("✓")} Created project ${ui.bold(resolved.name)} — it's now on your dashboard.`,
-    );
-  }
-  console.log(
-    `  ${ui.green("✓")} Linked ${CONFIG_FILENAME} to project ${ui.bold(resolved.name)}.`,
-  );
 }

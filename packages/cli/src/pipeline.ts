@@ -53,7 +53,7 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
 
   const config = await loadConfig(projectDir, { stage: env.stage });
   if (!config.projectId) {
-    throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to use the laranja server.');
+    throw new Error("This project isn't linked to laranja — run `laranja init` to connect it.");
   }
   step("scan project");
   const ir = scan({ projectDir, config });

@@ -158,7 +158,11 @@ export async function loadConfig(
   if (!cfg) {
     throw new Error(`${CONFIG_FILENAME} must \`export default\` a config object.`);
   }
-  if (!cfg.name) throw new Error(`${CONFIG_FILENAME}: "name" is required.`);
+  if (!cfg.name) {
+    throw new Error(
+      `${CONFIG_FILENAME}: "name" is required — run \`laranja init\` to link this directory to a project.`,
+    );
+  }
   // The HTTP app is declared in code via an `http(app)` marker, which the scanner
   // resolves — there's no config field for it. The scanner raises a clear error
   // if there's ultimately nothing to deploy.

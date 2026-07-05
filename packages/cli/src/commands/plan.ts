@@ -1,7 +1,6 @@
 import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
-import { ensureProjectLinked } from "../project-link.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 import { summarizePlan, type StackDiffView } from "../plan-summary.js";
@@ -26,10 +25,8 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   const apiKey = resolveApiKey();
   if (!apiKey) throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to plan.");
 
-  // Link this directory to a dashboard project (picker) if it isn't already,
-  // before loadConfig — an unlinked config has an empty name it would reject.
-  await ensureProjectLinked(projectDir, apiKey);
-
+  // loadConfig raises a clear "run `laranja init`" error if this directory isn't
+  // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });

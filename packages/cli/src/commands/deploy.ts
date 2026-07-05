@@ -11,6 +11,7 @@ import {
   resolveDeclaredEnv,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
+import { ensureProjectLinked } from "../project-link.js";
 import { getAccountId, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
@@ -24,18 +25,24 @@ export async function deploy(
   opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
 ): Promise<void> {
   const started = Date.now();
+
+  // Synth always happens on the laranja server; we need the API key before
+  // touching AWS (and before linking), so fail fast.
+  const apiKey = resolveApiKey();
+  if (!apiKey) {
+    throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy.");
+  }
+
+  // If this directory isn't linked to a dashboard project yet, show the picker
+  // (pick or create) and write it into the config, rather than dying on an empty
+  // name/projectId. Runs before loadConfig, which requires a non-empty name.
+  await ensureProjectLinked(projectDir, apiKey);
+
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   note({ project: config.name, stage: config.stage, region });
   applyAwsEnv({ region, profile: config.profile });
-
-  // Synth always happens on the laranja server; we need the API key before
-  // touching AWS, so fail fast.
-  const apiKey = resolveApiKey();
-  if (!apiKey) {
-    throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy.");
-  }
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 

@@ -11,7 +11,7 @@ export type HttpResourceId = "http";
 /** Cron ids in this project. */
 export type CronResourceId = "clearCacheCron" | "sendOnboardingEmailsCron";
 /** Queue names in this project. */
-export type QueueResourceId = "eventHandler" | "eventsHandlerDLQ" | "fifoHandler.fifo" | "welcomeEmail";
+export type QueueResourceId = "fifoHandler.fifo" | "welcomeEmail" | "welcomeEmailDLQ";
 
 /** Every resource id: the http id, cron ids, and queue names. */
 export type ResourceId = HttpResourceId | CronResourceId | QueueResourceId;

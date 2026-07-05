@@ -13,9 +13,15 @@ app.get("/env", (req, res) => {
   return res.json({ message: `Reading env variable value ${env("TEST_ENV")}` });
 });
 
-app.get("/register", async (req, res) => {
-  await getQueue("welcomeEmail").send({ userEmail: req.body.userEmail ?? "" });
-  return res.status(200);
+app.post("/register", async (req, res) => {
+  try {
+    await getQueue("welcomeEmail").send({
+      userEmail: req.body.userEmail ?? "",
+    });
+  } catch (e) {
+    return res.status(500).json({ error: "failed to enqueue" });
+  }
+  return res.status(200).json({ ok: true });
 });
 
 app.use("/dashboard", dashboardRouter);

@@ -11,6 +11,7 @@
  */
 
 import {
+  dashboardName,
   describeSchedule,
   handlerLabel,
   handlerName,
@@ -48,6 +49,23 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     `arn:aws:lambda:${region}:${account}:function:${functionName(ir, label)}`;
 
   const resources: DeployedResource[] = [];
+
+  // The monitoring dashboard is one physical AWS::CloudWatch::Dashboard named
+  // `<app>-<stage>` (see laranja-cdk). It has no ARN worth showing; the value is
+  // the console deep link, stored BE-side as `externalUrl` so the FE renders a
+  // clickable node without knowing the provider. Other providers fill the same
+  // field with their own console URL.
+  if (ir.app.monitoring) {
+    const name = dashboardName(ir.app.name, ir.app.stage);
+    resources.push({
+      name: "monitoring",
+      type: "dashboard",
+      action: "CREATED",
+      metadata: meta(),
+      externalId: null,
+      externalUrl: `https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#dashboards/dashboard/${name}`,
+    });
+  }
 
   if (ir.http) {
     resources.push({

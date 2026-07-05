@@ -13,6 +13,13 @@
 export { rate, every, CronExpression } from "@alzulejos/laranja-core";
 export type { RateUnit, Schedule, ScheduleInput } from "@alzulejos/laranja-core";
 
+// The queue PRODUCER (`getQueue(name).send(...)`) — the counterpart to the
+// @Queue / queue() consumers below. Unlike the markers this one does real work at
+// runtime (an SQS SendMessage), but it lives here so users have a single import
+// surface for everything queue-related.
+export { getQueue } from "./producer.js";
+export type { LaranjaQueue, SendOptions } from "./producer.js";
+
 import type { ScheduleInput } from "@alzulejos/laranja-core";
 
 /** Options object `@nestjs/schedule`'s `@Cron` accepts as its SECOND argument. */

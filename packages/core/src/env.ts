@@ -46,3 +46,16 @@ export function resolveDeclaredEnv(
 export function envParamName(key: string): string {
   return `Env${key.replace(/[^A-Za-z0-9]/g, "")}`;
 }
+
+/**
+ * The Lambda environment variable name that carries a declared queue's SQS URL.
+ * The synth injects `LARANJA_QUEUE_URL_<name>` into EVERY function's env (so any
+ * function can produce to any queue), and the runtime producer — `getQueue(name)`
+ * — reads the same key. This is the single source of truth shared by laranja-cdk
+ * (which sets the value) and laranja-runtime (which reads it); keyed by the
+ * queue's declared `name` (the user-facing identity), with non-alphanumerics
+ * collapsed to "_" so it is a valid env-var name.
+ */
+export function queueUrlEnvName(name: string): string {
+  return `LARANJA_QUEUE_URL_${name.replace(/[^A-Za-z0-9]/g, "_")}`;
+}

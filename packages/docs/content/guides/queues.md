@@ -92,9 +92,49 @@ deploys a queue named `orders.fifo`. The normalized name is what appears in
 
 ## Sending messages
 
-laranja provisions the queue and consumer; **producing** messages is up to your
-app. Send to the queue with the AWS SDK (`@aws-sdk/client-sqs`) using the queue
-URL — emitted as a stack output after deploy and visible in the AWS console.
+Consuming is only half the loop — to **produce** a message, call
+[`getQueue`](../reference/decorators-and-markers.md#getqueue) with the queue's
+`name` and `.send()` a payload:
+
+```ts
+import { getQueue } from "@laranja/decorators";
+
+app.post("/signup", async (req, res) => {
+  await getQueue("emails").send({ to: req.body.email, template: "welcome" });
+  res.sendStatus(202);
+});
+```
+
+Objects are JSON-serialized for you (strings are sent as-is), so the consumer
+receives them already parsed — `getQueue("emails").send({ to })` on one end,
+`async sendEmail(body)` on the other.
+
+You can produce from **anywhere** in a deployed app — an HTTP route, a
+[cron job](./cron-jobs.md), or another queue's consumer fanning out. laranja
+injects each queue's URL into every function's environment at deploy and grants
+`sqs:SendMessage`, so there's no client to configure, no URL to look up, and no
+IAM to wire. It's a thin wrapper over one SQS `SendMessage` call — laranja
+provisions the infrastructure; it deliberately does **not** add a job framework
+(retries, scheduling, and job state stay with SQS and your consumer).
+
+### FIFO and options
+
+`.send()` takes a second options argument:
+
+| Option | Applies to | Description |
+|---|---|---|
+| `groupId` | FIFO (**required**) | `MessageGroupId` — messages with the same group are ordered. |
+| `dedupId` | FIFO | `MessageDeduplicationId` — only needed when content-based dedup is off. |
+| `delaySeconds` | Standard | Delay (0–900s) before the message becomes visible. Ignored by FIFO. |
+
+```ts
+// FIFO queues require a groupId — the send throws without one.
+await getQueue("orders.fifo").send(order, { groupId: order.customerId });
+```
+
+> Prefer the raw SDK? The queue URL is also emitted as a stack output after
+> deploy and visible in the AWS console — send with `@aws-sdk/client-sqs`
+> directly if you'd rather.
 
 ## Related
 

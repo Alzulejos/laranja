@@ -1,5 +1,5 @@
 import { describe, test, expect } from "vitest";
-import { resolveDeclaredEnv, envParamName } from "@alzulejos/laranja-core";
+import { resolveDeclaredEnv, envParamName, queueUrlEnvName } from "@alzulejos/laranja-core";
 
 describe("resolveDeclaredEnv", () => {
   test("splits declared keys into resolved values and missing names", () => {
@@ -20,5 +20,14 @@ describe("envParamName", () => {
   test("produces an alphanumeric CloudFormation Parameter logical id", () => {
     expect(envParamName("DATABASE_URL")).toBe("EnvDATABASEURL");
     expect(envParamName("stripe.key-1")).toBe("Envstripekey1");
+  });
+});
+
+describe("queueUrlEnvName", () => {
+  test("prefixes the queue name with LARANJA_QUEUE_URL_, collapsing non-alphanumerics to _", () => {
+    expect(queueUrlEnvName("emails")).toBe("LARANJA_QUEUE_URL_emails");
+    // FIFO suffix and dashes are not valid in an env-var name -> "_"
+    expect(queueUrlEnvName("orders.fifo")).toBe("LARANJA_QUEUE_URL_orders_fifo");
+    expect(queueUrlEnvName("order-events")).toBe("LARANJA_QUEUE_URL_order_events");
   });
 });

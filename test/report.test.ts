@@ -75,6 +75,24 @@ describe("buildDeployedResources", () => {
     });
   });
 
+  it("carries a queue's DLQ as an edge, translating the target's SQS name to its resource id", () => {
+    const ir = makeIr({
+      http: undefined,
+      queues: [
+        // dlq.queue references the target by its SQS *name* ("dead-queue"); nodes are
+        // keyed by id, so metadata must carry the target's id ("dead") for the edge.
+        { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders-queue", dlq: { queue: "dead-queue", maxReceiveCount: 3 } },
+        { style: "function", file: "src/q.ts", exportName: "deadLetters", source: "src/q.ts:2", id: "dead", name: "dead-queue" },
+      ],
+    });
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const orders = res.find((r) => r.name === "orders")!;
+    const dead = res.find((r) => r.name === "dead")!;
+    expect(orders.metadata.dlq).toEqual({ queue: "dead", maxReceiveCount: 3 });
+    // A queue without a DLQ carries no dlq key.
+    expect(dead.metadata.dlq).toBeUndefined();
+  });
+
   it("stores the structured schedule plus a ready-to-display description on cron metadata", () => {
     const ir = makeIr({
       http: undefined,

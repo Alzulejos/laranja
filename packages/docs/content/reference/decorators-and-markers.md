@@ -1,6 +1,6 @@
 ---
 title: Decorators & markers
-description: API reference for @Cron, @Queue, cron, queue, and http.
+description: API reference for @Cron, @Queue, cron, queue, getQueue, and http.
 order: 3
 ---
 
@@ -174,6 +174,45 @@ export async function sendEmail(body: unknown) {}
 
 queue({ name: "emails", batchSize: 10 }, sendEmail);
 ```
+
+---
+
+## `getQueue()`
+
+The queue **producer** — get a handle to a declared queue and `.send()` messages
+to it. The counterpart to the [`@Queue`](#queue) / [`queue()`](#queue-marker)
+consumers. Unlike the markers, this does real work at runtime (a single SQS
+`SendMessage`); laranja injects the queue URL and grants `sqs:SendMessage` to
+every function, so there's nothing to configure.
+
+```ts
+function getQueue(name: string): LaranjaQueue
+
+interface LaranjaQueue {
+  readonly url: string;
+  send(payload: unknown, options?: SendOptions): Promise<{ messageId?: string }>;
+}
+```
+
+```ts
+import { getQueue } from "@laranja/decorators";
+
+await getQueue("emails").send({ to, subject });
+await getQueue("orders.fifo").send(order, { groupId: order.customerId });
+```
+
+`payload` is JSON-serialized (strings are sent as-is). `name` is the queue's
+declared `name`; a send to an undeclared queue throws.
+
+**`SendOptions`**
+
+| Field | Type | Applies to | Description |
+|---|---|---|---|
+| `groupId` | `string` | FIFO (**required**) | `MessageGroupId` — orders messages within a group. A FIFO send throws without it. |
+| `dedupId` | `string` | FIFO | `MessageDeduplicationId` — only needed when content-based dedup is off. |
+| `delaySeconds` | `number` | Standard | Delay (0–900s) before the message becomes visible. Ignored by FIFO. |
+
+See [Queues → Sending messages](../guides/queues.md#sending-messages).
 
 ---
 

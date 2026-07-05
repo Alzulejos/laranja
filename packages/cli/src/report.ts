@@ -73,6 +73,11 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     });
   }
 
+  // A queue's DLQ target is another declared queue, referenced by its SQS `name`.
+  // Resource nodes are keyed by `q.id`, so translate name→id here — the dashboard
+  // draws the redrive edge (source queue → DLQ queue) directly between nodes.
+  const idByQueueName = new Map(ir.queues.map((q) => [q.name, q.id]));
+
   for (const q of ir.queues) {
     resources.push({
       name: q.id,
@@ -83,6 +88,12 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
         fifo: Boolean(q.fifo),
         batchSize: q.batchSize ?? 10,
         queueArn: `arn:aws:sqs:${region}:${account}:${q.name}`,
+        ...(q.dlq && {
+          dlq: {
+            queue: idByQueueName.get(q.dlq.queue) ?? q.dlq.queue,
+            maxReceiveCount: q.dlq.maxReceiveCount,
+          },
+        }),
       }),
       externalId: arn(handlerName(q)),
       externalUrl: null,

@@ -225,7 +225,7 @@ export type DeploymentPatch = DeploymentStartedPatch | DeploymentOutcomePatch;
  * Logical resource kind, for dashboard grouping/icons. ("function" = a plain
  * compute fn — provider-neutral.) For an `http` proxy the logical name is "http".
  */
-export type DeployedResourceType = "http" | "cron" | "queue" | "function";
+export type DeployedResourceType = "http" | "cron" | "queue" | "function" | "dashboard";
 
 /**
  * How a resource changed in this deploy, derived from the CloudFormation change

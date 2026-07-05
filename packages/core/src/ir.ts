@@ -168,6 +168,11 @@ export interface InfraIR {
     provider: CloudProvider;
     /** Deployment stage; part of resource names. */
     stage: string;
+    /**
+     * Emit a per-app-stage monitoring dashboard. Provider-neutral; the back half
+     * maps it to its own primitives (CloudWatch dashboard on AWS). Defaults to true.
+     */
+    monitoring: boolean;
     /** Project-relative app entry (same as http.handlerEntry). Absent for workers-only apps. */
     entry?: string;
   };

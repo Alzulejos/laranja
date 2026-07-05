@@ -88,6 +88,14 @@ export interface LaranjaConfig {
   /** Plain env injected into every Lambda. */
   env?: Record<string, string>;
   /**
+   * Emit a per-app-stage monitoring dashboard (`<name>-<stage>`) with per-function
+   * invocations / errors / throttles / duration for the HTTP proxy and every
+   * cron/queue consumer. Provider-neutral — each back half maps it to its own
+   * primitives. HTTP status classes (2xx/4xx/5xx) come later with API Gateway.
+   * Defaults to true.
+   */
+  monitoring?: boolean;
+  /**
    * Default compute config (memory, timeout, …) applied to every function — the
    * HTTP proxy and each cron/queue consumer. Override per-resource via `resources`.
    */
@@ -121,6 +129,18 @@ export function stackName(name: string, stage: string): string {
 }
 
 /**
+ * The monitoring dashboard's physical name: `<name>-<stage>`, sanitized to the
+ * chars CloudWatch allows (A–Z a–z 0–9 - _) and capped at 255.
+ *
+ * Single source of truth: the back half names the dashboard from here, and the
+ * client builds the console deep link (`externalUrl`) from here, so the two can
+ * never drift. Provider-neutral name; each back half maps it to its own dashboard.
+ */
+export function dashboardName(name: string, stage: string): string {
+  return `${name}-${stage}`.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 255);
+}
+
+/**
  * Loads `laranja.config.ts` from the project dir. Runs under tsx, so importing a
  * TypeScript config module Just Works. Returns the config with defaults applied,
  * then any `overrides` (e.g. a `--stage` flag) layered on top.
@@ -128,7 +148,7 @@ export function stackName(name: string, stage: string): string {
 export async function loadConfig(
   projectDir: string,
   overrides: ConfigOverrides = {},
-): Promise<Required<Pick<LaranjaConfig, "env" | "stage" | "provider">> & LaranjaConfig> {
+): Promise<Required<Pick<LaranjaConfig, "env" | "stage" | "provider" | "monitoring">> & LaranjaConfig> {
   const file = path.join(projectDir, CONFIG_FILENAME);
   if (!existsSync(file)) {
     throw new Error(`No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`);
@@ -154,6 +174,7 @@ export async function loadConfig(
   return {
     stage: "dev",
     provider: "aws",
+    monitoring: true,
     env: {},
     ...cfg,
     // Overrides win over both defaults and the config file (only when set).

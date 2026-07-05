@@ -20,3 +20,10 @@ export function fifoHandler(payload: any) {
 }
 
 queue({ name: "fifoHandler", batchSize: 1, fifo: true }, fifoHandler);
+
+export function welcomeEmail(userEmail: string) {
+  console.log(`Sening welcome email to ${userEmail}`);
+  return true;
+}
+
+queue({ name: "welcomeEmail", batchSize: 5 }, welcomeEmail);

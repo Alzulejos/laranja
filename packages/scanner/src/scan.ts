@@ -166,9 +166,10 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
 
   const stage = config.stage ?? "dev";
   const provider = config.provider ?? "aws";
+  const monitoring = config.monitoring ?? true;
 
   return {
-    app: { name: config.name, framework, provider, stage, entry: http?.handlerEntry },
+    app: { name: config.name, framework, provider, stage, monitoring, entry: http?.handlerEntry },
     http,
     workers,
     crons,

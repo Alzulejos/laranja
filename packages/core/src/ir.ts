@@ -108,22 +108,29 @@ export interface HttpIR {
 }
 
 /**
- * A `workers(SomeModule)` marker: a Nest module the worker Lambdas build a
- * standalone DI context from, so class-based @Cron/@Queue providers resolve their
- * injected dependencies. Absent for Express (no DI) and workers-free projects.
+ * A `workers(SomeModule)` marker — and, post‑consolidation, the ONE worker Lambda
+ * for that module. All of a module's method‑style `@Cron`/`@Queue` handlers run in
+ * this single function: it boots a standalone DI context
+ * (`NestFactory.createApplicationContext(module)`) once, and its generated shim
+ * routes each invocation (EventBridge → cron by id, SQS → queue by ARN) to the
+ * right provider method. Absent for Express (no DI) and workers‑free projects.
  *
  * A project may declare several — one per disjoint DI root (e.g. a queues module
  * and a crons module) — so each worker Lambda boots only the graph it needs and
- * pays a smaller cold start. Each method-style cron/queue names its root via
- * `workersId`.
+ * pays a smaller cold start. Each method‑style cron/queue names its module via
+ * `workersId`; that is the function it belongs to.
  */
 export interface WorkersIR {
-  /** Stable id — the root module's class name; what handlers point `workersId` at. */
+  /** Stable id — the module's class name; what handlers point `workersId` at, and
+   *  the asset/function key for this worker Lambda. */
   id: string;
   /** Project-relative module that exports `workers(SomeModule)`. */
   handlerEntry: string;
   /** Named export within that module (e.g. "default" or "jobs"). */
   appExport: string;
+  /** Compute for this shared worker function — resolved from `resources[<module>]`
+   *  merged over the global `compute` default. Shared by every hosted handler. */
+  compute?: ComputeConfig;
 }
 
 /** @Cron(...) / cron(...) -> scheduled trigger -> its own Lambda. */

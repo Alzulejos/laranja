@@ -169,7 +169,7 @@ describe("nest worker shim (DI)", () => {
       ...overrides,
     });
 
-  test("class-based @Cron resolves the provider through NestFactory + DI", () => {
+  test("a module's crons + queues become ONE worker dispatcher Lambda", () => {
     const entries = generateEntries(
       nestIR({
         crons: [
@@ -181,23 +181,9 @@ describe("nest worker shim (DI)", () => {
             className: "TasksService",
             method: "sweep",
             source: "src/tasks/tasks.service.ts:9",
+            workersId: "AppModule",
           },
         ],
-      }),
-      nestOpts,
-    );
-    const shim = byId(entries, "Tasks-sweep");
-    expect(shim.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
-    expect(shim.contents).toContain(`import workersModule from "../../dist/app.module";`);
-    expect(shim.contents).toContain(`import { TasksService } from "../../dist/tasks/tasks.service";`);
-    expect(shim.contents).toContain(`createNestScheduledHandler(`);
-    expect(shim.contents).toContain(`() => NestFactory.createApplicationContext(workersModule)`);
-    expect(shim.contents).toContain(`"sweep"`);
-  });
-
-  test("class-based @Queue uses the DI queue factory", () => {
-    const entries = generateEntries(
-      nestIR({
         queues: [
           {
             style: "method",
@@ -207,14 +193,25 @@ describe("nest worker shim (DI)", () => {
             className: "Mailer",
             method: "send",
             source: "src/mailer.ts:5",
+            workersId: "AppModule",
           },
         ],
       }),
       nestOpts,
     );
-    const shim = byId(entries, "Mailer-send");
-    expect(shim.contents).toContain(`createNestQueueHandler(`);
+    // One Lambda for the module, keyed by the module id — not per handler.
+    expect(entries.map((e) => e.id).sort()).toEqual(["AppModule"]);
+    const shim = byId(entries, "AppModule");
+    expect(shim.kind).toBe("worker");
+    expect(shim.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
+    expect(shim.contents).toContain(`import workersModule from "../../dist/app.module";`);
+    expect(shim.contents).toContain(`import { TasksService } from "../../dist/tasks/tasks.service";`);
     expect(shim.contents).toContain(`import { Mailer } from "../../dist/mailer";`);
+    expect(shim.contents).toContain(`createNestWorkerDispatcher(`);
+    expect(shim.contents).toContain(`() => NestFactory.createApplicationContext(workersModule)`);
+    // Cron routed by id (the EventBridge input), queue routed by name (the SQS source).
+    expect(shim.contents).toContain(`"Tasks-sweep": [TasksService, "sweep"]`);
+    expect(shim.contents).toContain(`"emails": [Mailer, "send"]`);
   });
 
   test("a named workers export is imported by alias", () => {
@@ -230,12 +227,13 @@ describe("nest worker shim (DI)", () => {
             className: "TasksService",
             method: "sweep",
             source: "src/tasks.service.ts:9",
+            workersId: "AppModule",
           },
         ],
       }),
       nestOpts,
     );
-    expect(byId(entries, "Tasks-sweep").contents).toContain(
+    expect(byId(entries, "AppModule").contents).toContain(
       `import { jobs as workersModule } from "../../dist/app.module";`,
     );
   });
@@ -295,13 +293,14 @@ describe("nest worker shim (DI)", () => {
       }),
       nestOpts,
     );
-    // The queue shim imports the queue module; the cron shim imports the cron module —
-    // neither drags in the other's DI graph.
-    const queueShim = byId(entries, "EmailConsumer-handle").contents;
-    const cronShim = byId(entries, "SweepService-sweep").contents;
+    // Each module is its own worker Lambda; neither drags in the other's DI graph.
+    const queueShim = byId(entries, "QueueModule").contents;
+    const cronShim = byId(entries, "CronModule").contents;
     expect(queueShim).toContain(`import workersModule from "../../dist/queue/queue.module";`);
+    expect(queueShim).toContain(`"emails": [EmailConsumer, "handle"]`);
     expect(queueShim).not.toContain("cron.module");
     expect(cronShim).toContain(`import workersModule from "../../dist/cron/cron.module";`);
+    expect(cronShim).toContain(`"SweepService-sweep": [SweepService, "sweep"]`);
     expect(cronShim).not.toContain("queue.module");
   });
 });

@@ -15,10 +15,7 @@ export class CronService {
     const bar = this.configService.get<string>('VALUE') ?? 'Sweep';
     const users = this.userService.findUsersToOnboard();
     try {
-      await getQueue('onBoardingEmails').send(
-        { users, bar },
-        { delaySeconds: 20 },
-      );
+      await getQueue('onBoardingEmails').send({ users, bar });
       return true;
     } catch (e: any) {
       throw new Error(e);

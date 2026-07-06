@@ -803,3 +803,47 @@ describe("multi-root workers (per-module DI graphs)", () => {
     expect(ir.queues[0].workersId).toBe("AppModule");
   });
 });
+
+describe("worker consolidation config (compute on the module, triggers on the handler)", () => {
+  // One module hosting a cron + a queue on the same provider — the common single-
+  // Lambda-per-module case.
+  const oneModule = () => ({
+    "src/jobs.ts": `
+      import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
+      export class Jobs {
+        @Cron(rate(5, "minutes")) async sweep() {}
+        @Queue({ name: "emails", batchSize: 5 }) async send() {}
+      }
+    `,
+    "src/app.module.ts": `
+      import { Module } from "@nestjs/common";
+      import { workers } from "@alzulejos/laranja-decorators";
+      import { Jobs } from "./jobs";
+      @Module({ providers: [Jobs] })
+      class AppModule {}
+      export default workers(AppModule);
+    `,
+  });
+
+  test("compute set on the module key lands on the worker, not the handlers", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { AppModule: { memory: 512, timeout: 45 } } as never });
+    const ir = scan({ projectDir: makeProject(oneModule()), config: cfgWith });
+    expect(ir.workers?.[0]).toMatchObject({ id: "AppModule", compute: { memory: 512, timeout: 45 } });
+    // Grouped handlers carry no compute of their own — it's the module's.
+    expect(ir.crons[0].compute).toBeUndefined();
+    expect(ir.queues[0].compute).toBeUndefined();
+  });
+
+  test("trigger knobs on a grouped queue key still apply", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { emails: { visibilityTimeout: 120 } } as never });
+    const ir = scan({ projectDir: makeProject(oneModule()), config: cfgWith });
+    expect(ir.queues[0].visibilityTimeout).toBe(120);
+  });
+
+  test("a compute knob on a grouped handler key errors and points at the module", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { emails: { memory: 256 } } as never });
+    expect(() => scan({ projectDir: makeProject(oneModule()), config: cfgWith })).toThrow(
+      /resources\["emails"\]\.memory is a per-worker setting now.*resources\["AppModule"\]/,
+    );
+  });
+});

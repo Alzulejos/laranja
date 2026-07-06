@@ -33,7 +33,7 @@ const PAINT: Record<Status, (s: string) => string> = {
 const idKey = (s: string) => s.replace(/[^A-Za-z0-9]/g, "");
 
 interface Entity {
-  kind: "HTTP" | "Cron" | "Queue";
+  kind: "HTTP" | "Worker" | "Cron" | "Queue";
   name: string;
   detail: string;
   /** Logical-id prefixes the server's synth gives this entity's resources. */
@@ -51,16 +51,30 @@ function entitiesFromIr(ir: InfraIR): Entity[] {
       prefixes: ["Http"],
     });
   }
+  // A worker module is one consolidated Lambda (WorkerXFn) hosting its grouped
+  // crons/queues; the per-handler triggers below still own their own resources.
+  for (const w of ir.workers ?? []) {
+    const nCron = ir.crons.filter((c) => c.workersId === w.id).length;
+    const nQueue = ir.queues.filter((q) => q.workersId === w.id).length;
+    if (nCron + nQueue === 0) continue;
+    const parts = [nCron && `${nCron} cron${nCron === 1 ? "" : "s"}`, nQueue && `${nQueue} queue${nQueue === 1 ? "" : "s"}`];
+    out.push({
+      kind: "Worker",
+      name: w.id,
+      detail: `${parts.filter(Boolean).join(" + ")} → one Lambda`,
+      prefixes: [`Worker${idKey(w.id)}`],
+    });
+  }
   for (const c of ir.crons) {
+    // Schedule + role are per-cron (Cron<id>Schedule/Role) whether or not the
+    // function is shared, so this prefix is right either way.
     out.push({ kind: "Cron", name: c.id, detail: describeSchedule(c.schedule), prefixes: [`Cron${idKey(c.id)}`] });
   }
   for (const q of ir.queues) {
-    out.push({
-      kind: "Queue",
-      name: q.id,
-      detail: "SQS + consumer Lambda",
-      prefixes: [`Queue${idKey(q.id)}`, `Consumer${idKey(q.id)}`],
-    });
+    // The SQS queue is always per-@Queue; a standalone queue also owns its consumer
+    // (Consumer<id>Fn), whereas a grouped one runs in its worker Lambda above.
+    const prefixes = q.workersId ? [`Queue${idKey(q.id)}`] : [`Queue${idKey(q.id)}`, `Consumer${idKey(q.id)}`];
+    out.push({ kind: "Queue", name: q.id, detail: q.workersId ? "SQS → worker Lambda" : "SQS + consumer Lambda", prefixes });
   }
   return out;
 }

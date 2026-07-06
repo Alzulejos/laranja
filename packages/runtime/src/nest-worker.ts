@@ -1,6 +1,9 @@
 import type { Context, Handler, SQSBatchResponse, SQSEvent } from "aws-lambda";
 import { runSqsBatch, type QueueConsumer } from "./queue.js";
 
+/** A DI‑resolvable provider + the method to invoke on it. */
+export type DispatchEntry = [Ctor<object>, string];
+
 /**
  * Nest-backed worker handlers. Unlike the Express path — where a `@Cron`/`@Queue`
  * class is `new`'d directly — a Nest provider's method depends on injected
@@ -24,17 +27,20 @@ export type NestContextFactory = () => NestContextLike | Promise<NestContextLike
 
 type Ctor<T> = new (...args: any[]) => T;
 
-/** Build (once) the context, resolve the provider, and pull the target method off it. */
+/** Build (once) the context, resolve the provider, and pull the target method off it.
+ *  `method` is a plain string (the dispatch tables carry `[Provider, "name"]`), so
+ *  there's no compile-time `keyof` guard here — the runtime check below catches a
+ *  bad name. */
 function resolveMethod<T extends object>(
   ctx: NestContextLike,
   Ctor: Ctor<T>,
-  method: keyof T & string,
+  method: string,
   kind: "@Cron" | "@Queue",
 ): (...args: unknown[]) => unknown {
   const instance = ctx.get(Ctor);
-  const fn = instance[method] as unknown;
+  const fn = (instance as Record<string, unknown>)[method];
   if (typeof fn !== "function") {
-    throw new Error(`${kind} target ${Ctor.name}.${String(method)} is not a method`);
+    throw new Error(`${kind} target ${Ctor.name}.${method} is not a method`);
   }
   return (fn as (...args: unknown[]) => unknown).bind(instance);
 }
@@ -63,4 +69,52 @@ export function createNestQueueHandler<T extends object>(
     consumer ??= resolveMethod(await contextFactory(), Ctor, method, "@Queue") as QueueConsumer;
     return runSqsBatch(consumer, event, context);
   };
+}
+
+/** The declared queue name is the last `:`‑segment of an SQS `eventSourceARN`
+ *  (`arn:aws:sqs:<region>:<acct>:<name>`); laranja names the queue = its declared
+ *  name, so this maps a record straight back to the routing table key. */
+function queueNameFromArn(arn: string): string {
+  return arn.slice(arn.lastIndexOf(":") + 1);
+}
+
+function isSqsEvent(event: unknown): event is SQSEvent {
+  return !!event && typeof event === "object" && Array.isArray((event as { Records?: unknown }).Records);
+}
+
+/**
+ * The consolidated worker handler: ONE Lambda for a whole `workers()` module,
+ * hosting all its `@Cron` and `@Queue` methods. It builds the module's DI context
+ * once (cached across warm invocations) and routes by event shape —
+ *
+ *  - **SQS** (`Records` present): each record → the consumer for its source queue,
+ *    looked up by `eventSourceARN`, through the partial‑batch‑failure contract.
+ *  - **EventBridge**: our schedules pass `{ handler: "<cronId>" }` → the cron method.
+ *
+ * The routing tables map an id to `[Provider, method]`; the provider resolves
+ * through DI so injected dependencies work exactly as in the app.
+ */
+export function createNestWorkerDispatcher(
+  contextFactory: NestContextFactory,
+  tables: { crons: Record<string, DispatchEntry>; queues: Record<string, DispatchEntry> },
+): Handler {
+  let ctx: NestContextLike | undefined;
+  const getCtx = async (): Promise<NestContextLike> => (ctx ??= await contextFactory());
+
+  return (async (event: unknown, context: Context) => {
+    if (isSqsEvent(event)) {
+      const c = await getCtx();
+      const consumer: QueueConsumer = (body, record, ctx2) => {
+        const name = queueNameFromArn(record.eventSourceARN);
+        const entry = tables.queues[name];
+        if (!entry) throw new Error(`worker: no @Queue consumer for "${name}"`);
+        return resolveMethod(c, entry[0], entry[1], "@Queue")(body, record, ctx2);
+      };
+      return runSqsBatch(consumer, event, context);
+    }
+    const handlerId = (event as { handler?: string } | null)?.handler;
+    const entry = handlerId ? tables.crons[handlerId] : undefined;
+    if (!entry) throw new Error(`worker: no @Cron handler for "${String(handlerId)}"`);
+    return await resolveMethod(await getCtx(), entry[0], entry[1], "@Cron")(event, context);
+  }) as Handler;
 }

@@ -72,8 +72,8 @@ export type ResourceId = HttpResourceId | CronResourceId | QueueResourceId;
  */
 export type TypedLaranjaConfig = Omit<LaranjaConfig, "resources"> & {
   resources?: Partial<Record<HttpResourceId, HttpResourceConfig>> &
-    Partial<Record<CronResourceId, CronResourceConfig>> &
-    Partial<Record<QueueResourceId, QueueResourceConfig>>;
+    Partial<Record<CronResourceId, CronResourceConfig<QueueResourceId>>> &
+    Partial<Record<QueueResourceId, QueueResourceConfig<QueueResourceId>>>;
 };
 `;
 }

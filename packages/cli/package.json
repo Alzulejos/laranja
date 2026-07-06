@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -22,9 +22,9 @@
     "@aws-sdk/client-cloudwatch-logs": "^3.658.0",
     "@aws-sdk/client-ssm": "^3.658.0",
     "@aws-sdk/client-sts": "^3.658.0",
-    "@alzulejos/laranja-assembly": "0.0.18",
-    "@alzulejos/laranja-core": "0.0.18",
-    "@alzulejos/laranja-runtime": "0.0.18",
-    "@alzulejos/laranja-scanner": "0.0.18"
+    "@alzulejos/laranja-assembly": "0.0.19",
+    "@alzulejos/laranja-core": "0.0.19",
+    "@alzulejos/laranja-runtime": "0.0.19",
+    "@alzulejos/laranja-scanner": "0.0.19"
   }
 }

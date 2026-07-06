@@ -29,29 +29,36 @@ export interface CronTuning {
 
 /**
  * DLQ for a queue — the id of another declared queue, plus the required
- * `maxReceiveCount` (after N failed receives → dead-letter).
+ * `maxReceiveCount` (after N failed receives → dead-letter). `Q` is the union of
+ * this project's queue names, so the generated config autocompletes `queue` to a
+ * real target; it defaults to `string` for the untyped fallback.
  */
-export interface QueueDlq {
-  queue: string;
+export interface QueueDlq<Q extends string = string> {
+  queue: Q;
   maxReceiveCount: number;
 }
 
 /** DLQ for a cron — the id of another declared queue. A failed async invoke dead-letters immediately, so there's no receive count. */
-export interface CronDlq {
-  queue: string;
+export interface CronDlq<Q extends string = string> {
+  queue: Q;
 }
 
 /** Per-resource overrides for the HTTP proxy: compute knobs only. */
 export type HttpResourceConfig = ComputeConfig;
 
-/** Per-resource overrides for a queue consumer: compute + queue tuning + a queue DLQ. */
-export interface QueueResourceConfig extends ComputeConfig, QueueTuning {
-  dlq?: QueueDlq;
+/**
+ * Per-resource overrides for a queue consumer: compute + queue tuning + a queue
+ * DLQ. `Q` (the project's queue-name union) types the DLQ target for autocomplete.
+ */
+export interface QueueResourceConfig<Q extends string = string>
+  extends ComputeConfig, QueueTuning {
+  dlq?: QueueDlq<Q>;
 }
 
-/** Per-resource overrides for a cron: compute + cron tuning + a cron DLQ. */
-export interface CronResourceConfig extends ComputeConfig, CronTuning {
-  dlq?: CronDlq;
+/** Per-resource overrides for a cron: compute + cron tuning + a cron DLQ (target typed by `Q`). */
+export interface CronResourceConfig<Q extends string = string>
+  extends ComputeConfig, CronTuning {
+  dlq?: CronDlq<Q>;
 }
 
 /**
@@ -141,28 +148,6 @@ export function dashboardName(name: string, stage: string): string {
 }
 
 /**
- * `laranja.config.ts` is ESM (`export default`), but the project it lives in is
- * almost always "typeless" — a Nest/Express app whose package.json has no
- * `"type": "module"` because its own build is CommonJS. Importing the config then
- * makes Node detect the format by syntax and print a MODULE_TYPELESS_PACKAGE_JSON
- * warning the user can't act on without breaking their app's CJS build. It's
- * laranja's config, so laranja swallows exactly that one warning code — everything
- * else Node emits still gets through. Idempotent; installed once, lazily.
- */
-let typelessWarningSilenced = false;
-function silenceTypelessConfigWarning(): void {
-  if (typelessWarningSilenced) return;
-  typelessWarningSilenced = true;
-  const original = process.emitWarning.bind(process);
-  process.emitWarning = ((warning: unknown, ...args: unknown[]) => {
-    const opt = args[0];
-    const code = opt && typeof opt === "object" ? (opt as { code?: string }).code : args[1];
-    if (code === "MODULE_TYPELESS_PACKAGE_JSON") return;
-    return (original as (...a: unknown[]) => void)(warning, ...args);
-  }) as typeof process.emitWarning;
-}
-
-/**
  * Loads `laranja.config.ts` from the project dir. Runs under tsx, so importing a
  * TypeScript config module Just Works. Returns the config with defaults applied,
  * then any `overrides` (e.g. a `--stage` flag) layered on top.
@@ -170,16 +155,22 @@ function silenceTypelessConfigWarning(): void {
 export async function loadConfig(
   projectDir: string,
   overrides: ConfigOverrides = {},
-): Promise<Required<Pick<LaranjaConfig, "env" | "stage" | "provider" | "monitoring">> & LaranjaConfig> {
+): Promise<
+  Required<Pick<LaranjaConfig, "env" | "stage" | "provider" | "monitoring">> &
+    LaranjaConfig
+> {
   const file = path.join(projectDir, CONFIG_FILENAME);
   if (!existsSync(file)) {
-    throw new Error(`No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`);
+    throw new Error(
+      `No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`,
+    );
   }
-  silenceTypelessConfigWarning();
   const mod = await import(pathToFileURL(file).href);
   const cfg: LaranjaConfig | undefined = mod.default ?? mod.config;
   if (!cfg) {
-    throw new Error(`${CONFIG_FILENAME} must \`export default\` a config object.`);
+    throw new Error(
+      `${CONFIG_FILENAME} must \`export default\` a config object.`,
+    );
   }
   if (!cfg.name) {
     throw new Error(

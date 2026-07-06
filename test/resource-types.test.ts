@@ -43,6 +43,9 @@ describe("resource types generation", () => {
       "export type ResourceId = HttpResourceId | CronResourceId | QueueResourceId;",
     );
     expect(out).toContain("export type TypedLaranjaConfig");
+    // The DLQ target is bound to the queue-name union so `dlq.queue` autocompletes.
+    expect(out).toContain("CronResourceConfig<QueueResourceId>");
+    expect(out).toContain("QueueResourceConfig<QueueResourceId>");
   });
 
   test("the init stub is permissive (per-kind ids = string)", () => {

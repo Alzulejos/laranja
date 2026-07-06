@@ -149,20 +149,40 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   // Resource keys: http -> "http", cron -> its id, queue -> its NAME (what the
   // user wrote in @Queue/queue() — the natural handle, and what a DLQ references).
   // They share one namespace, so reject collisions before anything references them.
-  assertUniqueResourceKeys(http, crons, queues);
-  validateResourceKeys(config, http, crons, queues);
+  assertUniqueResourceKeys(http, crons, queues, workers);
+  validateResourceKeys(config, http, crons, queues, workers);
   const queueNames = new Set(queues.map((q) => q.name));
   if (http) {
     http.compute = resolveCompute(config, "http");
     rejectForeignKeys("http", "http app", config.resources?.["http"], COMPUTE_KEYS);
   }
+  // A worker module is ONE Lambda: compute lives on the module key, shared by every
+  // handler it hosts (see WorkersIR). Resolve it once per module.
+  for (const w of workers ?? []) {
+    w.compute = resolveCompute(config, w.id);
+    rejectForeignKeys(w.id, "worker module", config.resources?.[w.id], COMPUTE_KEYS);
+  }
+  const computeById = new Map((workers ?? []).map((w) => [w.id, w.compute]));
   for (const c of crons) {
-    c.compute = resolveCompute(config, c.id);
-    applyCronConfig(c, config.resources?.[c.id], queueNames);
+    // Grouped (method-style, in a worker module): its function's compute is the
+    // module's — never per-cron. Standalone crons keep their own compute.
+    if (c.workersId) {
+      applyCronConfig(c, config.resources?.[c.id], queueNames, true);
+    } else {
+      c.compute = resolveCompute(config, c.id);
+      applyCronConfig(c, config.resources?.[c.id], queueNames, false);
+    }
   }
   for (const q of queues) {
-    q.compute = resolveCompute(config, q.name);
-    applyQueueConfig(q, config.resources?.[q.name], queueNames);
+    // Effective consumer timeout for the visibility-timeout floor: the worker
+    // function's timeout when grouped, else this queue's own.
+    const workerTimeout = q.workersId ? computeById.get(q.workersId)?.timeout : undefined;
+    if (q.workersId) {
+      applyQueueConfig(q, config.resources?.[q.name], queueNames, true, workerTimeout);
+    } else {
+      q.compute = resolveCompute(config, q.name);
+      applyQueueConfig(q, config.resources?.[q.name], queueNames, false, q.compute?.timeout);
+    }
   }
 
   const stage = config.stage ?? "dev";
@@ -215,12 +235,14 @@ function validateResourceKeys(
   http: HttpIR | undefined,
   crons: CronIR[],
   queues: QueueIR[],
+  workers: WorkersIR[] | undefined,
 ): void {
   if (!config.resources) return;
   const validIds = new Set<string>([
     ...(http ? ["http"] : []),
     ...crons.map((c) => c.id),
     ...queues.map((q) => q.name),
+    ...(workers ?? []).map((w) => w.id),
   ]);
   for (const key of Object.keys(config.resources)) {
     if (!validIds.has(key)) {
@@ -239,7 +261,12 @@ function validateResourceKeys(
  * make a key ambiguous, so reject it early with a clear message rather than let
  * CloudFormation fail on a duplicate physical name later.
  */
-function assertUniqueResourceKeys(http: HttpIR | undefined, crons: CronIR[], queues: QueueIR[]): void {
+function assertUniqueResourceKeys(
+  http: HttpIR | undefined,
+  crons: CronIR[],
+  queues: QueueIR[],
+  workers: WorkersIR[] | undefined,
+): void {
   const seen = new Map<string, string>();
   const claim = (key: string, what: string): void => {
     const prev = seen.get(key);
@@ -251,6 +278,7 @@ function assertUniqueResourceKeys(http: HttpIR | undefined, crons: CronIR[], que
   if (http) claim("http", "the HTTP app");
   for (const c of crons) claim(c.id, `cron "${c.id}"`);
   for (const q of queues) claim(q.name, `queue "${q.name}"`);
+  for (const w of workers ?? []) claim(w.id, `worker module "${w.id}"`);
 }
 
 /** Default consumer timeout (seconds); mirrors the back-half so validation matches. */
@@ -282,10 +310,35 @@ function rejectForeignKeys(
   }
 }
 
+/**
+ * Reject compute knobs on a GROUPED handler's key — its Lambda is the worker
+ * module, so compute belongs on `resources[<module>]`. A clear migration error
+ * beats a silently-ignored `memory` on a queue that no longer owns a function.
+ */
+function rejectComputeOnGrouped(id: string, workersId: string, override: ResourceConfig): void {
+  const stray = Object.keys(override).find((k) => COMPUTE_KEYS.has(k));
+  if (stray) {
+    throw new Error(
+      `laranja.config.ts: resources["${id}"].${stray} is a per-worker setting now — ` +
+        `${id} shares the "${workersId}" Lambda. Move ${stray} to resources["${workersId}"].`,
+    );
+  }
+}
+
 /** Apply a cron's per-resource override (timezone, async retry, DLQ) onto its IR. */
-function applyCronConfig(c: CronIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+function applyCronConfig(
+  c: CronIR,
+  override: ResourceConfig | undefined,
+  queueNames: Set<string>,
+  grouped: boolean,
+): void {
   if (!override) return;
-  rejectForeignKeys(c.id, "cron", override, COMPUTE_KEYS, CRON_KEYS);
+  if (grouped && c.workersId) {
+    rejectComputeOnGrouped(c.id, c.workersId, override); // compute → migration error
+    rejectForeignKeys(c.id, "cron", override, CRON_KEYS); // then only trigger knobs allowed
+  } else {
+    rejectForeignKeys(c.id, "cron", override, COMPUTE_KEYS, CRON_KEYS);
+  }
   if (override.timezone !== undefined) c.timezone = override.timezone;
   if (override.retryAttempts !== undefined) {
     if (override.retryAttempts < 0 || override.retryAttempts > 2) {
@@ -300,10 +353,25 @@ function applyCronConfig(c: CronIR, override: ResourceConfig | undefined, queueN
   }
 }
 
-/** Apply a queue's per-resource override (SQS + event-source knobs, DLQ) onto its IR. */
-function applyQueueConfig(q: QueueIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+/**
+ * Apply a queue's per-resource override (SQS + event-source knobs, DLQ) onto its IR.
+ * `consumerTimeout` is the effective consumer‑function timeout — the worker
+ * module's when grouped, else this queue's own — used as the visibility floor.
+ */
+function applyQueueConfig(
+  q: QueueIR,
+  override: ResourceConfig | undefined,
+  queueNames: Set<string>,
+  grouped: boolean,
+  consumerTimeout: number | undefined,
+): void {
   if (!override) return;
-  rejectForeignKeys(q.name, "queue", override, COMPUTE_KEYS, QUEUE_KEYS);
+  if (grouped && q.workersId) {
+    rejectComputeOnGrouped(q.name, q.workersId, override); // compute → migration error
+    rejectForeignKeys(q.name, "queue", override, QUEUE_KEYS); // then only trigger knobs allowed
+  } else {
+    rejectForeignKeys(q.name, "queue", override, COMPUTE_KEYS, QUEUE_KEYS);
+  }
   if (override.contentBasedDedup !== undefined) {
     if (!q.fifo) {
       throw new Error(`laranja.config.ts: resources["${q.name}"].contentBasedDedup is FIFO-only.`);
@@ -314,7 +382,7 @@ function applyQueueConfig(q: QueueIR, override: ResourceConfig | undefined, queu
   if (override.reportBatchItemFailures !== undefined) q.reportBatchItemFailures = override.reportBatchItemFailures;
   if (override.messageRetention !== undefined) q.messageRetention = override.messageRetention;
   if (override.visibilityTimeout !== undefined) {
-    const timeout = q.compute?.timeout ?? DEFAULT_CONSUMER_TIMEOUT;
+    const timeout = consumerTimeout ?? DEFAULT_CONSUMER_TIMEOUT;
     if (override.visibilityTimeout < timeout) {
       throw new Error(
         `laranja.config.ts: resources["${q.name}"].visibilityTimeout (${override.visibilityTimeout}s) ` +

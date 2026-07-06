@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { HandlerRef, InfraIR, WorkersIR } from "@alzulejos/laranja-core";
+import type { CronIR, HandlerRef, InfraIR, QueueIR, WorkersIR } from "@alzulejos/laranja-core";
 
 /**
  * A generated Lambda entry file. These tiny shims are what the bundler points at:
@@ -10,7 +10,8 @@ import type { HandlerRef, InfraIR, WorkersIR } from "@alzulejos/laranja-core";
 export interface GeneratedEntry {
   /** Logical id of the resulting Lambda (matches the IR id). */
   id: string;
-  kind: "http" | "cron" | "queue";
+  /** "worker" = a consolidated Nest module Lambda hosting several crons/queues. */
+  kind: "http" | "cron" | "queue" | "worker";
   /** File name to write under the entry dir. */
   fileName: string;
   /** Exported handler symbol (always "handler" for now). */
@@ -59,36 +60,60 @@ function importBinding(local: string, exportName: string, spec: string): string 
 }
 
 /**
- * The Nest DI shim for a class-based worker: import the compiled provider and the
- * compiled `workers(AppModule)` module, build a standalone context, and let the
- * runtime factory resolve the provider through DI. `NestFactory` is imported from
- * the user's own `@nestjs/core` (present in a Nest project), keeping the runtime
- * package framework-agnostic.
+ * The consolidated Nest worker shim: ONE Lambda for a whole `workers()` module.
+ * Imports the compiled module once + each hosted provider once, then wires a
+ * `createNestWorkerDispatcher` with two routing tables — crons keyed by id (the
+ * EventBridge input), queues keyed by name (the SQS source). `NestFactory` is
+ * imported from the user's own `@nestjs/core`, keeping the runtime package
+ * framework-agnostic.
  */
-function nestWorkerShim(
-  ref: { className: string; method: string; file: string },
-  factory: "createNestScheduledHandler" | "createNestQueueHandler",
-  workers: WorkersIR | undefined,
+function workerDispatcherShim(
+  worker: WorkersIR,
+  crons: CronIR[],
+  queues: QueueIR[],
   opts: GenerateEntriesOptions,
 ): string {
-  if (!workers || !opts.resolveCompiled) {
+  if (!opts.resolveCompiled) {
     throw new Error(
-      `Cannot generate a Nest worker shim for ${ref.className}.${ref.method}: ` +
-        `missing the compiled workers(...) module. Add \`export default workers(AppModule)\` and build first.`,
+      `Cannot generate the worker shim for "${worker.id}": missing the compiled module. ` +
+        `Add \`export default workers(${worker.id})\` and build first.`,
     );
   }
-  const providerSpec = importSpecifier(opts.entryDir, opts.resolveCompiled(ref.file));
-  const workersSpec = importSpecifier(opts.entryDir, opts.resolveCompiled(workers.handlerEntry));
-  const workersImport = importBinding("workersModule", workers.appExport, workersSpec);
+  const resolve = opts.resolveCompiled;
+  const workersSpec = importSpecifier(opts.entryDir, resolve(worker.handlerEntry));
+  const workersImport = importBinding("workersModule", worker.appExport, workersSpec);
+
+  // Import each provider class once, even if it hosts several methods.
+  const providerImports = new Map<string, string>();
+  const cronRows: string[] = [];
+  const queueRows: string[] = [];
+  for (const c of crons) {
+    if (c.style !== "method") continue;
+    providerImports.set(c.className, importSpecifier(opts.entryDir, resolve(c.file)));
+    cronRows.push(`      "${c.id}": [${c.className}, "${c.method}"],`);
+  }
+  for (const q of queues) {
+    if (q.style !== "method") continue;
+    providerImports.set(q.className, importSpecifier(opts.entryDir, resolve(q.file)));
+    queueRows.push(`      "${q.name}": [${q.className}, "${q.method}"],`);
+  }
+  const imports = [...providerImports].map(([cls, spec]) => `import { ${cls} } from "${spec}";`).join("\n");
+
   return `import { NestFactory } from "@nestjs/core";
 ${workersImport}
-import { ${ref.className} } from "${providerSpec}";
-import { ${factory} } from "@alzulejos/laranja-runtime";
+${imports}
+import { createNestWorkerDispatcher } from "@alzulejos/laranja-runtime";
 
-export const handler = ${factory}(
+export const handler = createNestWorkerDispatcher(
   () => NestFactory.createApplicationContext(workersModule),
-  ${ref.className},
-  "${ref.method}",
+  {
+    crons: {
+${cronRows.join("\n")}
+    },
+    queues: {
+${queueRows.join("\n")}
+    },
+  },
 );
 `;
 }
@@ -114,11 +139,10 @@ function handlerWiring(ref: HandlerRef, spec: string): { importLine: string; fac
 export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): GeneratedEntry[] {
   const entries: GeneratedEntry[] = [];
   const isNest = ir.app.framework === "nest";
-  const workerRoots = ir.workers ?? [];
-  // A method-style worker names its DI root via `workersId`; fall back to the only
-  // root when a single-root IR left it unset (older shape / hand-built test IRs).
-  const rootFor = (workersId: string | undefined): WorkersIR | undefined =>
-    (workersId ? workerRoots.find((w) => w.id === workersId) : undefined) ?? workerRoots[0];
+  const workers = ir.workers ?? [];
+  // A method-style Nest handler is GROUPED into its module's one worker Lambda.
+  const isGrouped = (h: HandlerRef & { workersId?: string }): boolean =>
+    isNest && h.style === "method" && h.workersId !== undefined;
 
   // HTTP proxy: one Lambda wrapping the whole app. Absent for workers-only apps.
   // Express exports a ready app instance (createHttpHandler(app)); Nest exports an
@@ -143,40 +167,58 @@ export const handler = ${factory}(${local});
     });
   }
 
-  // Cron: one Lambda per @Cron method / cron() function. A Nest class-based cron
-  // resolves its provider through DI (nestWorkerShim); everything else — Express
-  // classes and standalone cron() functions — is `new`'d / called directly.
+  // Worker Lambdas: one per `workers()` module, hosting all its grouped (method-
+  // style) crons + queues behind a single dispatcher. This is where bundle
+  // duplication disappears — the module's DI graph is bundled once, not per handler.
+  for (const w of workers) {
+    const crons = ir.crons.filter((c) => c.workersId === w.id && c.style === "method");
+    const queues = ir.queues.filter((q) => q.workersId === w.id && q.style === "method");
+    if (crons.length === 0 && queues.length === 0) continue;
+    entries.push({
+      id: w.id,
+      kind: "worker",
+      fileName: `worker-${safe(w.id)}.ts`,
+      handlerExport: "handler",
+      contents: workerDispatcherShim(w, crons, queues, opts),
+    });
+  }
+
+  // Cron: one Lambda per STANDALONE @Cron / cron() (Express classes, or function-
+  // style). Grouped Nest crons are hosted by their worker Lambda above.
   for (const cron of ir.crons) {
-    let contents: string;
-    if (isNest && cron.style === "method") {
-      contents = nestWorkerShim(cron, "createNestScheduledHandler", rootFor(cron.workersId), opts);
-    } else {
-      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
-      const { importLine, factoryArgs } = handlerWiring(cron, spec);
-      contents = `${importLine}
+    if (isGrouped(cron)) continue;
+    const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
+    const { importLine, factoryArgs } = handlerWiring(cron, spec);
+    entries.push({
+      id: cron.id,
+      kind: "cron",
+      fileName: `cron-${safe(cron.id)}.ts`,
+      handlerExport: "handler",
+      contents: `${importLine}
 import { createScheduledHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createScheduledHandler(${factoryArgs});
-`;
-    }
-    entries.push({ id: cron.id, kind: "cron", fileName: `cron-${safe(cron.id)}.ts`, handlerExport: "handler", contents });
+`,
+    });
   }
 
-  // Queue: one consumer Lambda per @Queue method / queue() function. Same DI split.
+  // Queue: one consumer Lambda per STANDALONE @Queue / queue(). Grouped Nest
+  // queues are hosted by their worker Lambda above.
   for (const queue of ir.queues) {
-    let contents: string;
-    if (isNest && queue.style === "method") {
-      contents = nestWorkerShim(queue, "createNestQueueHandler", rootFor(queue.workersId), opts);
-    } else {
-      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
-      const { importLine, factoryArgs } = handlerWiring(queue, spec);
-      contents = `${importLine}
+    if (isGrouped(queue)) continue;
+    const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
+    const { importLine, factoryArgs } = handlerWiring(queue, spec);
+    entries.push({
+      id: queue.id,
+      kind: "queue",
+      fileName: `queue-${safe(queue.id)}.ts`,
+      handlerExport: "handler",
+      contents: `${importLine}
 import { createQueueHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createQueueHandler(${factoryArgs});
-`;
-    }
-    entries.push({ id: queue.id, kind: "queue", fileName: `queue-${safe(queue.id)}.ts`, handlerExport: "handler", contents });
+`,
+    });
   }
 
   return entries;

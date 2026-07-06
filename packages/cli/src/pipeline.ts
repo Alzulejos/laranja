@@ -64,9 +64,10 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   // class-based provider. Express bundles straight from source (all undefined).
   const isNest = ir.app.framework === "nest";
   const httpEntry = isNest && ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
-  const workersEntry = isNest && ir.workers ? resolveNestCompiledEntry(projectDir, ir.workers.handlerEntry) : undefined;
+  // Nest worker shims resolve both the provider file and each workers(...) module to
+  // their compiled paths through this — so multiple DI roots need no extra plumbing.
   const resolveCompiled = isNest ? (file: string) => resolveNestCompiledEntry(projectDir, file) : undefined;
-  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, workersEntry, resolveCompiled });
+  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, resolveCompiled });
   const handlers = await bundleEntries(entries, {
     entryDir,
     buildDir,

@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { HandlerRef, InfraIR } from "@alzulejos/laranja-core";
+import type { HandlerRef, InfraIR, WorkersIR } from "@alzulejos/laranja-core";
 
 /**
  * A generated Lambda entry file. These tiny shims are what the bundler points at:
@@ -31,15 +31,9 @@ export interface GenerateEntriesOptions {
    */
   httpEntry?: string;
   /**
-   * Absolute path to the user's COMPILED `workers(AppModule)` module. Required when
-   * a Nest project has class-based (@Cron/@Queue) workers — their shims build a DI
-   * context from it. Same metadata rationale as `httpEntry`.
-   */
-  workersEntry?: string;
-  /**
-   * Map a source handler file to its COMPILED path. Nest class-based workers must
-   * import the compiled provider (DI metadata intact), not the `.ts` source. Absent
-   * for Express, where shims bundle straight from source.
+   * Map a source file to its COMPILED path. Nest class-based workers must import the
+   * compiled provider AND their compiled `workers(...)` module (DI metadata intact),
+   * not the `.ts` source. Absent for Express, where shims bundle straight from source.
    */
   resolveCompiled?: (file: string) => string;
 }
@@ -74,18 +68,18 @@ function importBinding(local: string, exportName: string, spec: string): string 
 function nestWorkerShim(
   ref: { className: string; method: string; file: string },
   factory: "createNestScheduledHandler" | "createNestQueueHandler",
-  workersAppExport: string,
+  workers: WorkersIR | undefined,
   opts: GenerateEntriesOptions,
 ): string {
-  if (!opts.workersEntry || !opts.resolveCompiled) {
+  if (!workers || !opts.resolveCompiled) {
     throw new Error(
       `Cannot generate a Nest worker shim for ${ref.className}.${ref.method}: ` +
-        `missing the compiled workers(AppModule) module. Add \`export default workers(AppModule)\` and build first.`,
+        `missing the compiled workers(...) module. Add \`export default workers(AppModule)\` and build first.`,
     );
   }
   const providerSpec = importSpecifier(opts.entryDir, opts.resolveCompiled(ref.file));
-  const workersSpec = importSpecifier(opts.entryDir, opts.workersEntry);
-  const workersImport = importBinding("workersModule", workersAppExport, workersSpec);
+  const workersSpec = importSpecifier(opts.entryDir, opts.resolveCompiled(workers.handlerEntry));
+  const workersImport = importBinding("workersModule", workers.appExport, workersSpec);
   return `import { NestFactory } from "@nestjs/core";
 ${workersImport}
 import { ${ref.className} } from "${providerSpec}";
@@ -120,7 +114,11 @@ function handlerWiring(ref: HandlerRef, spec: string): { importLine: string; fac
 export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): GeneratedEntry[] {
   const entries: GeneratedEntry[] = [];
   const isNest = ir.app.framework === "nest";
-  const workersExport = ir.workers?.appExport ?? "default";
+  const workerRoots = ir.workers ?? [];
+  // A method-style worker names its DI root via `workersId`; fall back to the only
+  // root when a single-root IR left it unset (older shape / hand-built test IRs).
+  const rootFor = (workersId: string | undefined): WorkersIR | undefined =>
+    (workersId ? workerRoots.find((w) => w.id === workersId) : undefined) ?? workerRoots[0];
 
   // HTTP proxy: one Lambda wrapping the whole app. Absent for workers-only apps.
   // Express exports a ready app instance (createHttpHandler(app)); Nest exports an
@@ -151,7 +149,7 @@ export const handler = ${factory}(${local});
   for (const cron of ir.crons) {
     let contents: string;
     if (isNest && cron.style === "method") {
-      contents = nestWorkerShim(cron, "createNestScheduledHandler", workersExport, opts);
+      contents = nestWorkerShim(cron, "createNestScheduledHandler", rootFor(cron.workersId), opts);
     } else {
       const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
       const { importLine, factoryArgs } = handlerWiring(cron, spec);
@@ -168,7 +166,7 @@ export const handler = createScheduledHandler(${factoryArgs});
   for (const queue of ir.queues) {
     let contents: string;
     if (isNest && queue.style === "method") {
-      contents = nestWorkerShim(queue, "createNestQueueHandler", workersExport, opts);
+      contents = nestWorkerShim(queue, "createNestQueueHandler", rootFor(queue.workersId), opts);
     } else {
       const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
       const { importLine, factoryArgs } = handlerWiring(queue, spec);

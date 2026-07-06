@@ -160,13 +160,12 @@ describe("nest worker shim (DI)", () => {
   const nestOpts = {
     projectDir,
     entryDir,
-    workersEntry: "/proj/dist/app.module.js",
     resolveCompiled: (file: string) => "/proj/dist/" + file.replace(/^src\//, "").replace(/\.ts$/, ".js"),
   };
   const nestIR = (overrides: Partial<InfraIR> = {}) =>
     baseIR({
       app: { name: "app", framework: "nest", stage: "dev", entry: "src/main.ts" },
-      workers: { handlerEntry: "src/app.module.ts", appExport: "default" },
+      workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
       ...overrides,
     });
 
@@ -221,7 +220,7 @@ describe("nest worker shim (DI)", () => {
   test("a named workers export is imported by alias", () => {
     const entries = generateEntries(
       nestIR({
-        workers: { handlerEntry: "src/app.module.ts", appExport: "jobs" },
+        workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "jobs" }],
         crons: [
           {
             style: "method",
@@ -260,5 +259,49 @@ describe("nest worker shim (DI)", () => {
     const shim = byId(entries, "refresh");
     expect(shim.contents).toContain(`createScheduledHandler(refresh)`);
     expect(shim.contents).not.toContain("NestFactory");
+  });
+
+  test("multiple DI roots: each shim boots only its own workers module", () => {
+    const entries = generateEntries(
+      nestIR({
+        workers: [
+          { id: "QueueModule", handlerEntry: "src/queue/queue.module.ts", appExport: "default" },
+          { id: "CronModule", handlerEntry: "src/cron/cron.module.ts", appExport: "default" },
+        ],
+        queues: [
+          {
+            style: "method",
+            id: "EmailConsumer-handle",
+            name: "emails",
+            file: "src/queue/email.consumer.ts",
+            className: "EmailConsumer",
+            method: "handle",
+            source: "src/queue/email.consumer.ts:3",
+            workersId: "QueueModule",
+          },
+        ],
+        crons: [
+          {
+            style: "method",
+            id: "SweepService-sweep",
+            schedule: "rate(5 minutes)",
+            file: "src/cron/sweep.service.ts",
+            className: "SweepService",
+            method: "sweep",
+            source: "src/cron/sweep.service.ts:3",
+            workersId: "CronModule",
+          },
+        ],
+      }),
+      nestOpts,
+    );
+    // The queue shim imports the queue module; the cron shim imports the cron module —
+    // neither drags in the other's DI graph.
+    const queueShim = byId(entries, "EmailConsumer-handle").contents;
+    const cronShim = byId(entries, "SweepService-sweep").contents;
+    expect(queueShim).toContain(`import workersModule from "../../dist/queue/queue.module";`);
+    expect(queueShim).not.toContain("cron.module");
+    expect(cronShim).toContain(`import workersModule from "../../dist/cron/cron.module";`);
+    expect(cronShim).not.toContain("queue.module");
   });
 });

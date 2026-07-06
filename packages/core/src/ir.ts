@@ -108,12 +108,19 @@ export interface HttpIR {
 }
 
 /**
- * The `workers(AppModule)` marker: the Nest module the worker Lambdas build a
+ * A `workers(SomeModule)` marker: a Nest module the worker Lambdas build a
  * standalone DI context from, so class-based @Cron/@Queue providers resolve their
  * injected dependencies. Absent for Express (no DI) and workers-free projects.
+ *
+ * A project may declare several — one per disjoint DI root (e.g. a queues module
+ * and a crons module) — so each worker Lambda boots only the graph it needs and
+ * pays a smaller cold start. Each method-style cron/queue names its root via
+ * `workersId`.
  */
 export interface WorkersIR {
-  /** Project-relative module that exports `workers(AppModule)`. */
+  /** Stable id — the root module's class name; what handlers point `workersId` at. */
+  id: string;
+  /** Project-relative module that exports `workers(SomeModule)`. */
   handlerEntry: string;
   /** Named export within that module (e.g. "default" or "jobs"). */
   appExport: string;
@@ -135,6 +142,8 @@ export type CronIR = HandlerRef & {
   dlq?: { queue: string };
   /** Resolved compute config for this cron's function. */
   compute?: ComputeConfig;
+  /** Method-style Nest crons only: id of the WorkersIR DI root that owns this provider. */
+  workersId?: string;
 };
 
 /** @Queue({ name }) / queue(...) -> SQS queue -> its own consumer Lambda. */
@@ -158,6 +167,8 @@ export type QueueIR = HandlerRef & {
   dlq?: { maxReceiveCount: number; queue: string };
   /** Resolved compute config for this queue's consumer function. */
   compute?: ComputeConfig;
+  /** Method-style Nest queues only: id of the WorkersIR DI root that owns this provider. */
+  workersId?: string;
 };
 
 export interface InfraIR {
@@ -178,8 +189,13 @@ export interface InfraIR {
   };
   /** Absent when there's no `http()` marker — a workers-only deployment. */
   http?: HttpIR;
-  /** Nest DI graph for class-based workers; absent for Express / function-only apps. */
-  workers?: WorkersIR;
+  /**
+   * Nest DI roots for class-based workers; absent for Express / function-only apps.
+   * One entry per `workers()` marker — a project can run disjoint DI graphs so each
+   * worker Lambda boots only its own module (smaller cold starts). Method-style
+   * crons/queues bind to a root via `workersId`.
+   */
+  workers?: WorkersIR[];
   crons: CronIR[];
   queues: QueueIR[];
   /**

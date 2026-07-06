@@ -14,6 +14,7 @@ import {
   type LaranjaConfig,
   type QueueIR,
   type ResourceConfig,
+  type WorkersIR,
 } from "@alzulejos/laranja-core";
 import { getPropertyInitializer, literalValue, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
@@ -66,12 +67,21 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const httpMarkers: CallMarker[] = [];
   const workerMarkers: CallMarker[] = [];
   const envKeys = new Set<string>();
+  // Project-wide index of class name -> declarations, used to walk a workers()
+  // module's DI provider graph when disambiguating multiple roots.
+  const classIndex = new Map<string, ClassDeclaration[]>();
 
   for (const sf of project.getSourceFiles()) {
     const rel = path.relative(projectDir, sf.getFilePath());
     if (rel.includes("node_modules")) continue;
 
     for (const cls of sf.getClasses()) {
+      const clsName = cls.getName();
+      if (clsName) {
+        const list = classIndex.get(clsName) ?? [];
+        list.push(cls);
+        classIndex.set(clsName, list);
+      }
       for (const method of cls.getMethods()) {
         collectFromMethod(rel, cls, method, crons, queues);
       }
@@ -115,22 +125,13 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     );
   }
 
-  // The workers() marker names the Nest module we build a DI context from, so each
-  // class-based (@Cron/@Queue on a provider) worker resolves through real DI instead
-  // of `new`. One marker per project.
-  if (workerMarkers.length > 1) {
-    throw new Error(
-      `Found ${workerMarkers.length} workers() markers (${workerMarkers
-        .map((m) => m.source)
-        .join(", ")}). There can be only one workers module per project.`,
-    );
-  }
-  const workerMarker = workerMarkers[0];
-  const workers = workerMarker
-    ? { handlerEntry: workerMarker.file, appExport: workerMarker.appExport }
-    : undefined;
+  // Each workers() marker names a Nest module we build a standalone DI context from,
+  // so class-based (@Cron/@Queue on a provider) workers resolve through real DI
+  // instead of `new`. A project may declare several disjoint roots; every method-style
+  // handler is bound to exactly one via `workersId`.
+  const workers = assignWorkerRoots(workerMarkers, crons, queues, classIndex);
 
-  // Nest resolves method-style workers through DI, which needs that module. (Plain
+  // Nest resolves method-style workers through DI, which needs a module. (Plain
   // function-style cron()/queue() handlers don't — they're standalone functions.)
   if (framework === "nest" && !workers) {
     const needsDi = [...crons, ...queues].find((h) => h.style === "method");
@@ -587,6 +588,8 @@ interface CallMarker {
   file: string;
   appExport: string;
   source: string;
+  /** The marker's first argument if it's a bare identifier (the module class for `workers`). */
+  argName?: string;
 }
 
 /** Local identifiers in this file bound to a given laranja marker (alias-aware). */
@@ -617,16 +620,18 @@ function collectCallMarkers(rel: string, sf: SourceFile, marker: string, markers
 
     const where = loc(rel, node);
     const parent = node.getParent();
+    const firstArg = node.getArguments()[0];
+    const argName = firstArg && Node.isIdentifier(firstArg) ? firstArg.getText() : undefined;
 
     if (parent && Node.isExportAssignment(parent)) {
-      markers.push({ file: rel, appExport: "default", source: where });
+      markers.push({ file: rel, appExport: "default", source: where, argName });
       return;
     }
     if (parent && Node.isVariableDeclaration(parent)) {
       if (!parent.getVariableStatement()?.isExported()) {
         throw new Error(`${marker}() at ${where}: the value must be exported, e.g. \`export const x = ${marker}(...)\`.`);
       }
-      markers.push({ file: rel, appExport: parent.getName(), source: where });
+      markers.push({ file: rel, appExport: parent.getName(), source: where, argName });
       return;
     }
     throw new Error(
@@ -634,6 +639,155 @@ function collectCallMarkers(rel: string, sf: SourceFile, marker: string, markers
         `or \`export const x = ${marker}(...)\`.`,
     );
   });
+}
+
+/**
+ * Bind each method-style @Cron/@Queue to its DI root and return the roots.
+ *
+ * - No marker: undefined (Express, or a workers-free / function-only project).
+ * - One marker: the common case — every method-style handler resolves against it,
+ *   no provider-graph walk needed (a bare `class AppModule {}` with no @Module
+ *   graph still works, as it always has).
+ * - Several markers: disambiguate by DI membership. Resolve each root's provider
+ *   class graph (its `providers`, transitively through `imports`) and bind each
+ *   handler to the single root that owns its class — so each worker Lambda later
+ *   boots only its own module. A handler in zero or several roots, or a root that
+ *   owns no worker, is a hard error.
+ */
+function assignWorkerRoots(
+  markers: CallMarker[],
+  crons: CronIR[],
+  queues: QueueIR[],
+  classIndex: Map<string, ClassDeclaration[]>,
+): WorkersIR[] | undefined {
+  if (markers.length === 0) return undefined;
+
+  if (markers.length === 1) {
+    const m = markers[0]!;
+    const id = m.argName ?? "workers";
+    for (const h of [...crons, ...queues]) {
+      if (h.style === "method") h.workersId = id;
+    }
+    return [{ id, handlerEntry: m.file, appExport: m.appExport }];
+  }
+
+  // Multiple roots: each marker must wrap a named module we can resolve a graph for.
+  const roots = markers.map((m) => {
+    if (!m.argName) {
+      throw new Error(
+        `workers() at ${m.source}: with multiple worker modules each must wrap a named module class, ` +
+          `e.g. \`export default workers(QueueModule)\`.`,
+      );
+    }
+    return { marker: m, id: m.argName, providers: providerClassNames(m.argName, classIndex, new Set()) };
+  });
+
+  const byId = new Map<string, (typeof roots)[number]>();
+  for (const r of roots) {
+    const prev = byId.get(r.id);
+    if (prev) {
+      throw new Error(
+        `workers(${r.id}) is declared twice (${prev.marker.source}, ${r.marker.source}). Mark each module once.`,
+      );
+    }
+    byId.set(r.id, r);
+  }
+
+  const owned = new Map<string, number>(roots.map((r) => [r.id, 0]));
+  for (const h of [...crons, ...queues]) {
+    if (h.style !== "method") continue;
+    const label = `${h.className}.${h.method}`;
+    const owning = roots.filter((r) => r.providers.has(h.className));
+    if (owning.length === 0) {
+      throw new Error(
+        `${h.source}: ${label} isn't a provider in any workers() module. ` +
+          `Add ${h.className} to the providers of one of: ${roots.map((r) => r.id).join(", ")}.`,
+      );
+    }
+    if (owning.length > 1) {
+      throw new Error(
+        `${h.source}: ${label} resolves to multiple workers() modules (${owning.map((r) => r.id).join(", ")}). ` +
+          `A provider must belong to a single DI root — remove it from all but one.`,
+      );
+    }
+    const root = owning[0]!;
+    h.workersId = root.id;
+    owned.set(root.id, (owned.get(root.id) ?? 0) + 1);
+  }
+
+  for (const r of roots) {
+    if ((owned.get(r.id) ?? 0) === 0) {
+      throw new Error(
+        `workers(${r.id}) at ${r.marker.source} owns no @Cron/@Queue provider. ` +
+          `A workers module must contain at least one worker — remove the marker or move a job into ${r.id}.`,
+      );
+    }
+  }
+
+  return roots.map((r) => ({ id: r.id, handlerEntry: r.marker.file, appExport: r.marker.appExport }));
+}
+
+/**
+ * The class names of the providers a Nest module owns, transitively through its
+ * `imports`. Modules we can't resolve in-project (e.g. `ConfigModule` from
+ * node_modules) contribute nothing — we only care about the user's own worker
+ * providers. Best-effort by design: it reads `providers`/`imports` statically and
+ * skips dynamic shapes it can't fold, which is safe (an unresolved provider simply
+ * won't match a handler, surfacing as a clear "not in any workers() module" error).
+ */
+function providerClassNames(
+  moduleName: string,
+  classIndex: Map<string, ClassDeclaration[]>,
+  seen: Set<string>,
+): Set<string> {
+  const out = new Set<string>();
+  if (seen.has(moduleName)) return out;
+  seen.add(moduleName);
+
+  const decl = classIndex.get(moduleName)?.[0];
+  const moduleDec = decl?.getDecorators().find((d) => d.getName() === "Module");
+  const arg = moduleDec?.getArguments()[0];
+  if (!arg || !Node.isObjectLiteralExpression(arg)) return out;
+
+  const providers = getPropertyInitializer(arg, "providers");
+  if (providers && Node.isArrayLiteralExpression(providers)) {
+    for (const el of providers.getElements()) {
+      const name = providerClassName(el);
+      if (name) out.add(name);
+    }
+  }
+
+  const imports = getPropertyInitializer(arg, "imports");
+  if (imports && Node.isArrayLiteralExpression(imports)) {
+    for (const el of imports.getElements()) {
+      const imported = importedModuleName(el);
+      if (imported) for (const p of providerClassNames(imported, classIndex, seen)) out.add(p);
+    }
+  }
+  return out;
+}
+
+/** The class a `providers[]` element names: `Svc` or `{ provide, useClass: Svc }`. */
+function providerClassName(el: Node): string | undefined {
+  if (Node.isIdentifier(el)) return el.getText();
+  if (Node.isObjectLiteralExpression(el)) {
+    const useClass = getPropertyInitializer(el, "useClass");
+    if (useClass && Node.isIdentifier(useClass)) return useClass.getText();
+  }
+  return undefined;
+}
+
+/** The module an `imports[]` element names: `Mod` or a dynamic `Mod.forRoot(...)`. */
+function importedModuleName(el: Node): string | undefined {
+  if (Node.isIdentifier(el)) return el.getText();
+  if (Node.isCallExpression(el)) {
+    const callee = el.getExpression();
+    if (Node.isPropertyAccessExpression(callee)) {
+      const obj = callee.getExpression();
+      if (Node.isIdentifier(obj)) return obj.getText();
+    }
+  }
+  return undefined;
 }
 
 /** Best-effort discovery of `app.get("/path", ...)` style routes for visibility. */

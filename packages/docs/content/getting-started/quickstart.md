@@ -86,7 +86,7 @@ The generated `laranja.config.ts` looks like this (edit `region`, `env`, and
 
 ```ts
 // laranja.config.ts
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@laranja/decorators";
 
 const config: LaranjaConfig = {
   name: "my-api",

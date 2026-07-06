@@ -8,6 +8,14 @@
  * pins each Lambda's `functionName` to `<app>-<label>-<stage>`, so the ARN is
  * `arn:aws:lambda:<region>:<account>:function:<that name>`. The Function URL
  * (http only) isn't reconstructable, so it comes from the stack outputs.
+ *
+ * Grouping: a Nest `workers()` module compiles to ONE shared worker Lambda that
+ * hosts every method-style `@Cron`/`@Queue` it owns (see laranja-cdk `stack.ts`).
+ * Such handlers carry a `workersId` (the module id) — the physical function label
+ * is that id, NOT the handler's own name, so every grouped cron/queue resolves to
+ * the same worker ARN. Each stays its own logical resource (its own node), so the
+ * dashboard renders e.g. two queues both pointing at one `<module>` Lambda; the
+ * `metadata.worker` field names that owning function for grouping/labels.
  */
 
 import {
@@ -85,8 +93,13 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
       action: "CREATED",
       // Store a ready-to-display label alongside the structured schedule so the
       // dashboard shows "Every minute" without re-deriving it from the cron string.
-      metadata: meta({ schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) } }),
-      externalId: arn(handlerLabel(cron)),
+      metadata: meta({
+        schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) },
+        ...(cron.workersId && { worker: cron.workersId }),
+      }),
+      // Grouped Nest crons run in their module's shared worker Lambda (label =
+      // workersId); a standalone cron owns its own function (label = handler name).
+      externalId: arn(cron.workersId ?? handlerLabel(cron)),
       externalUrl: null,
     });
   }
@@ -112,8 +125,11 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
             maxReceiveCount: q.dlq.maxReceiveCount,
           },
         }),
+        ...(q.workersId && { worker: q.workersId }),
       }),
-      externalId: arn(handlerName(q)),
+      // Grouped Nest queues share their module's worker Lambda (label = workersId);
+      // a standalone queue owns its own consumer function (label = handler name).
+      externalId: arn(q.workersId ?? handlerName(q)),
       externalUrl: null,
     });
   }

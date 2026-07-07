@@ -1,11 +1,11 @@
-import type { TypedLaranjaConfig } from "./laranja.types.js";
+import type { TypedLaranjaConfig } from './laranja.types.js';
 
 const config: TypedLaranjaConfig = {
   // Both filled in from the dashboard project you pick during `laranja init`.
-  name: "nestjs",
+  name: '',
   // From your laranja dashboard — identifies this project on the server.
-  projectId: "ea40244a-a913-4b3e-b7c4-e8c19fceb211",
-  region: "eu-central-1",
+  projectId: '',
+  region: 'eu-central-1',
   env: {},
   // Emit a CloudWatch dashboard (`<name>-<stage>`) with per-function metrics —
   // invocations, errors, throttles, duration. Set false to skip it. Defaults to true.

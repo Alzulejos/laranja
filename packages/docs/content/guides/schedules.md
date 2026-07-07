@@ -15,7 +15,7 @@ clouds. A raw expression string is available as an escape hatch.
 "Every N units." Portable everywhere.
 
 ```ts
-import { rate } from "@laranja/decorators";
+import { rate } from "@alzulejos/laranja-decorators";
 
 rate(5, "minutes")   // every 5 minutes
 rate(1, "hour")      // every hour
@@ -31,7 +31,7 @@ rate(2, "days")      // every 2 days
 Shorthand for `rate(1, unit)`. Takes a singular unit:
 
 ```ts
-import { every } from "@laranja/decorators";
+import { every } from "@alzulejos/laranja-decorators";
 
 every("minute")   // = rate(1, "minute")
 every("hour")     // = rate(1, "hour")
@@ -75,7 +75,7 @@ you, so a Nest app can swap the import and keep its existing schedules:
 ```
 
 `CronExpression` (mirrored from `@nestjs/schedule`) is re-exported from
-`@laranja/decorators`. Translation handles the day-of-week numbering difference
+`@alzulejos/laranja-decorators`. Translation handles the day-of-week numbering difference
 (Unix `0`=Sun → AWS `1`=Sun) and the day-of-month/day-of-week rule for you.
 
 **What can't be translated is rejected at build time — never silently rounded:**

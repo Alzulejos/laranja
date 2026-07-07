@@ -35,7 +35,7 @@ facts out of your code and provisions exactly what they imply.
 ```ts
 // src/app.ts — mark your HTTP app, code-first
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -48,7 +48,7 @@ decorators. Use whichever you prefer:
 
 ```ts tab="Function"
 // src/jobs.ts
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() { /* ... */ }
 cron(rate(5, "minutes"), refreshCache);
@@ -56,7 +56,7 @@ cron(rate(5, "minutes"), refreshCache);
 
 ```ts tab="Class"
 // src/jobs.ts
-import { Cron, rate } from "@laranja/decorators";
+import { Cron, rate } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))

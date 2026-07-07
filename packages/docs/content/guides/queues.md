@@ -14,7 +14,7 @@ A queue consumer processes messages from an SQS queue. Each one becomes
 Decorate a method with [`@Queue`](../reference/decorators-and-markers.md#queue):
 
 ```ts
-import { Queue } from "@laranja/decorators";
+import { Queue } from "@alzulejos/laranja-decorators";
 
 export class Workers {
   @Queue({ name: "emails", batchSize: 10 })
@@ -27,7 +27,7 @@ export class Workers {
 ## Function style — `queue()`
 
 ```ts
-import { queue } from "@laranja/decorators";
+import { queue } from "@alzulejos/laranja-decorators";
 
 export async function sendEmail(body: unknown) {
   // …
@@ -97,7 +97,7 @@ Consuming is only half the loop — to **produce** a message, call
 `name` and `.send()` a payload:
 
 ```ts
-import { getQueue } from "@laranja/decorators";
+import { getQueue } from "@alzulejos/laranja-decorators";
 
 app.post("/signup", async (req, res) => {
   await getQueue("emails").send({ to: req.body.email, template: "welcome" });

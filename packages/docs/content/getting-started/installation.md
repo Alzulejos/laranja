@@ -30,16 +30,16 @@ toolkit is embedded in laranja.
 Add the CLI as a dev dependency:
 
 ```bash
-npm install -D @laranja/cli
+npm install -D @alzulejos/laranja
 ```
 
 If you use decorators or function markers for jobs and queues, also install:
 
 ```bash
-npm install @laranja/decorators
+npm install @alzulejos/laranja-decorators
 ```
 
-> `@laranja/decorators` is a regular dependency (not dev-only) because your
+> `@alzulejos/laranja-decorators` is a regular dependency (not dev-only) because your
 > application imports `@Cron`, `@Queue`, `rate`, etc. at runtime.
 
 ## First-time AWS setup (bootstrap)

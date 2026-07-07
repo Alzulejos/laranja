@@ -6,20 +6,20 @@ order: 3
 
 # Decorators & markers
 
-All of these are imported from `@laranja/decorators`. They are **static markers**
+All of these are imported from `@alzulejos/laranja-decorators`. They are **static markers**
 — the [scanner](../getting-started/how-it-works.md#1-scan) reads them at build time to
 shape your infrastructure. At runtime they are near-no-ops (they don't wrap or
 intercept your functions), so they're safe to leave in place.
 
 ```bash
-npm install @laranja/decorators
+npm install @alzulejos/laranja-decorators
 ```
 
 The schedule builders [`rate`](../guides/schedules.md#ratevalue-unit) and
 [`every`](../guides/schedules.md#everyunit) are re-exported here too, so you can
 import them alongside `@Cron`. For `@nestjs/schedule` compatibility, the
 `CronExpression` enum, `@Interval`, and `@Timeout` are re-exported as well — so a
-Nest app can repoint its import at `@laranja/decorators` unchanged.
+Nest app can repoint its import at `@alzulejos/laranja-decorators` unchanged.
 
 ---
 
@@ -35,7 +35,7 @@ function Cron(expression: string, options?: NestCronOptions): MethodDecorator  /
 ```
 
 ```ts
-import { Cron, rate, CronExpression } from "@laranja/decorators";
+import { Cron, rate, CronExpression } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))
@@ -84,7 +84,7 @@ function cron(options: CronOptions, handler: JobHandler): void
 ```
 
 ```ts
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() {}
 
@@ -108,7 +108,7 @@ function Interval(name: string, milliseconds: number): MethodDecorator
 ```
 
 ```ts
-import { Interval } from "@laranja/decorators";
+import { Interval } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Interval(300000)          // every 5 minutes
@@ -138,7 +138,7 @@ function Queue(options: QueueOptions): MethodDecorator
 ```
 
 ```ts
-import { Queue } from "@laranja/decorators";
+import { Queue } from "@alzulejos/laranja-decorators";
 
 export class Workers {
   @Queue({ name: "emails", batchSize: 10 })
@@ -168,7 +168,7 @@ function queue(options: QueueOptions, handler: JobHandler): void
 ```
 
 ```ts
-import { queue } from "@laranja/decorators";
+import { queue } from "@alzulejos/laranja-decorators";
 
 export async function sendEmail(body: unknown) {}
 
@@ -195,7 +195,7 @@ interface LaranjaQueue {
 ```
 
 ```ts
-import { getQueue } from "@laranja/decorators";
+import { getQueue } from "@alzulejos/laranja-decorators";
 
 await getQueue("emails").send({ to, subject });
 await getQueue("orders.fifo").send(order, { groupId: order.customerId });
@@ -227,7 +227,7 @@ function http<T>(app: T): T
 
 ```ts
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 export default http(app);          // or: export const api = http(app);
@@ -258,7 +258,7 @@ function workers<T>(module: T): T
 ```
 
 ```ts
-import { workers } from "@laranja/decorators";
+import { workers } from "@alzulejos/laranja-decorators";
 import { AppModule } from "./app.module";
 
 export default workers(AppModule);   // or: export const jobs = workers(AppModule);
@@ -283,7 +283,7 @@ function env(name: string): string | undefined
 ```
 
 ```ts
-import { env } from "@laranja/decorators";
+import { env } from "@alzulejos/laranja-decorators";
 
 const dbUrl = env("DATABASE_URL");
 ```

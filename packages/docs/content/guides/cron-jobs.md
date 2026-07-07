@@ -15,7 +15,7 @@ Decorate a method with [`@Cron`](../reference/decorators-and-markers.md#cron) an
 give it a [schedule](./schedules.md):
 
 ```ts
-import { Cron, rate, every } from "@laranja/decorators";
+import { Cron, rate, every } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))
@@ -44,7 +44,7 @@ If you don't use classes, register a standalone exported function with
 [`cron()`](../reference/decorators-and-markers.md#cron-marker):
 
 ```ts
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() {
   // …
@@ -69,7 +69,7 @@ Swapping the import from `@nestjs/schedule` is usually the only change:
 ```ts
 // tasks.service.ts
 import { Injectable } from "@nestjs/common";
-import { Cron, CronExpression } from "@laranja/decorators";  // ← was @nestjs/schedule
+import { Cron, CronExpression } from "@alzulejos/laranja-decorators";  // ← was @nestjs/schedule
 
 @Injectable()
 export class TasksService {
@@ -89,7 +89,7 @@ marker:
 
 ```ts
 // src/main.ts (or a dedicated file)
-import { workers } from "@laranja/decorators";
+import { workers } from "@alzulejos/laranja-decorators";
 import { AppModule } from "./app.module";
 
 export default workers(AppModule);   // build a DI context from this module

@@ -15,7 +15,7 @@ export type { RateUnit, Schedule, ScheduleInput } from "@alzulejos/laranja-core"
 
 // Re-export the config-authoring types so `laranja.config.ts` can be typed from
 // the one package users already install — keeping the public surface to exactly
-// two packages (@laranja/cli + @laranja/decorators). `@laranja/core` stays an
+// two packages (@alzulejos/laranja + @alzulejos/laranja-decorators). `@alzulejos/laranja-core` stays an
 // internal CLI dependency; users never import it directly. The generated
 // `laranja.types.ts` still layers `TypedLaranjaConfig` on top for per-kind typing.
 export type {

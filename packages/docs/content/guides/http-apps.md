@@ -19,7 +19,7 @@ laranja finds it by scanning your code — there's nothing to configure.
 ```ts
 // src/app.ts
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 app.use(express.json());
@@ -44,7 +44,7 @@ async `NestFactory.create(...)`, so instead of a ready app object you wrap your
 ```ts
 // src/main.ts
 import { NestFactory } from "@nestjs/core";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 import { AppModule } from "./app.module";
 
 export async function bootstrap() {

@@ -21,9 +21,9 @@ $ laranja deploy
 
 ## Why laranja?
 
-- **Your code is the source of truth.** Routes and decorators *are* the infra spec — no drift between app and config.
+- **Your code is the source of truth.** Routes and decorators _are_ the infra spec — no drift between app and config.
 - **Your account, your data.** Deploys go straight into your AWS account with your own local credentials. laranja hosts none of your infrastructure.
-- **Your source stays local.** laranja *reads* your code to discover infra — it never runs it, and only a description of your infra ever crosses the wire.
+- **Your source stays local.** laranja _reads_ your code to discover infra — it never runs it, and only a description of your infra ever crosses the wire.
 - **Nothing to learn.** The AWS CDK toolkit is embedded; there's no CDK or CLI to install. Outgrow the magic? `laranja eject` hands you a fully-owned CDK project.
 
 ## Install
@@ -48,19 +48,18 @@ const app = express();
 app.get("/", (_req, res) => res.json({ ok: true }));
 app.get("/users/:id", (req, res) => res.json({ id: req.params.id }));
 
-export default http(app);   // ← the marker laranja looks for
+export default http(app); // ← the marker laranja looks for
 ```
 
 ```ts
 // src/jobs.ts
-import { Cron, rate } from "@alzulejos/laranja-decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
-export class Jobs {
-  @Cron(rate(5, "minutes"))
-  async refreshCache() {
-    console.log("refreshing…");
-  }
+export async function refreshCache() {
+  console.log("refreshing…");
+  return true;
 }
+cron({ schedule: rate(5, "minutes") }, refreshCache);
 ```
 
 ```bash
@@ -74,23 +73,44 @@ Same markers — wrap your bootstrap so it `return`s the app, and decorate a que
 
 ```ts
 // src/main.ts
-import { http, workers } from "@alzulejos/laranja-decorators";
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { http } from "@alzulejos/laranja-decorators";
 
 export async function bootstrap() {
   const app = await NestFactory.create(AppModule);
-  return http(app);          // ← the only change laranja needs
+  await app.listen(process.env.PORT ?? 3001);
+  return app;
 }
 
-export default workers(AppModule);   // DI root for background workers
+export default http(bootstrap);
 ```
 
 ```ts
-// src/emails.processor.ts
+// src/event/event.module.ts
+import { Module } from "@nestjs/common";
+import { QueueService } from "./queue.service";
+import { workers } from "@alzulejos/laranja-decorators";
+import { ConfigModule } from "@nestjs/config";
+import { UserModule } from "src/user/user.module";
+
+@Module({
+  imports: [ConfigModule, UserModule, MailerModule],
+  providers: [QueueService],
+})
+export class EventModule {}
+
+export default workers(EventModule);
+```
+
+```ts
+// src/event/queue.service.ts
 import { Queue } from "@alzulejos/laranja-decorators";
+import { Injectable } from "@nestjs/common";
 
 @Injectable()
-export class EmailsProcessor {
-  constructor(private readonly mailer: Mailer) {}   // real DI
+export class QueueService {
+  constructor(private readonly mailer: Mailer) {} // real DI
 
   @Queue({ name: "emails", batchSize: 10 })
   async sendEmails(body: EmailJob) {

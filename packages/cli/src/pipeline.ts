@@ -28,6 +28,8 @@ export interface Assembly {
 /** A deploy assembly also carries the dashboard deployment id to echo back. */
 export interface RemoteAssembly extends Assembly {
   deploymentId: string;
+  /** The validated dashboard project id (sent as `x-project-id` on lifecycle calls). */
+  projectId: string;
 }
 
 interface BuildEnv {
@@ -116,7 +118,7 @@ export async function buildRemoteAssembly(
     account: env.account,
   });
 
-  return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId };
+  return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId, projectId };
 }
 
 /**

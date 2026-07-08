@@ -51,7 +51,7 @@ export async function deploy(
   // only bundle + fingerprint locally, then deploy with the user's own AWS creds.
   step("server build (scan/bundle/synth)");
   const built = await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey);
-  const { ir, stackName, cdkOutDir, deploymentId } = built;
+  const { ir, stackName, cdkOutDir, deploymentId, projectId } = built;
   note({ deploymentId, stackName });
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
@@ -59,7 +59,7 @@ export async function deploy(
 
   // /synth opened the deployment row; report its lifecycle to the dashboard
   // (STARTED before AWS → SUCCESS/FAILED after).
-  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey));
+  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId));
 
   // Resolve the code-discovered env("...") keys from this machine's process.env.
   // Values are passed to CloudFormation as stack Parameters at deploy time (never
@@ -117,7 +117,7 @@ export async function deploy(
     sp.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     sp.fail("deploy failed");
-    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey));
+    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId));
     throw err;
   }
 
@@ -137,8 +137,8 @@ export async function deploy(
   // resources, per the lifecycle contract).
   step("report success");
   const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
-  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey));
-  await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey));
+  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
+  await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey, projectId));
   ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
 
   if (missing.length) {

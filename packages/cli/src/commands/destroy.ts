@@ -48,7 +48,7 @@ export async function destroy(projectDir: string, opts: { stage?: string } = {})
     projectId,
   );
   note({ deploymentId });
-  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey));
+  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId));
 
   // No synth, local or remote — CloudFormation deletes the stack by name.
   step("delete stack");
@@ -59,11 +59,11 @@ export async function destroy(projectDir: string, opts: { stage?: string } = {})
     sp.succeed(existed ? "destroyed" : "nothing to destroy (no such stack)");
   } catch (err) {
     sp.fail("destroy failed");
-    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey));
+    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId));
     throw err;
   }
 
-  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey));
+  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
 
   console.log(`\n  ${ui.orange("🧹 gone")}\n`);
 }

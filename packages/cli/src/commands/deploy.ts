@@ -11,7 +11,7 @@ import {
   resolveDeclaredEnv,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
-import { getAccountId, getStackPhysicalIds, isBootstrapped } from "../aws.js";
+import { getAccountId, getStackSnapshot, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
@@ -102,8 +102,8 @@ export async function deploy(
   }
 
   // Snapshot what's already in the stack BEFORE we deploy, so the resource report
-  // can label each resource CREATED vs UPDATED (empty on a first deploy).
-  const priorPhysicalIds = await getStackPhysicalIds(region, stackName);
+  // can label each resource CREATED / UPDATED / REMOVED (empty on a first deploy).
+  const priorStack = await getStackSnapshot(region, stackName);
 
   step("deploy to AWS");
   const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
@@ -140,10 +140,25 @@ export async function deploy(
   // Report the outcome + deployed inventory to the dashboard (success only POSTs
   // resources, per the lifecycle contract).
   step("report success");
-  const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing, priorPhysicalIds });
+  const resources = buildDeployedResources({
+    ir,
+    region,
+    account,
+    outputs: out,
+    missingEnv: missing,
+    priorPhysicalIds: priorStack.physicalIds,
+    priorNodeLambdas: priorStack.nodeLambdas,
+  });
   await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
   await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey, projectId));
   ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
+
+  // Surface teardowns explicitly — a resource dropped from code is gone from AWS
+  // after this deploy, so the user should see it, not just infer it from the graph.
+  const removed = resources.filter((r) => r.action === "REMOVED");
+  if (removed.length) {
+    ui.step("🗑️", "removed", removed.map((r) => `${r.name} (${r.type})`).join(", "));
+  }
 
   if (missing.length) {
     console.log();

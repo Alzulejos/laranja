@@ -26,8 +26,10 @@ import {
   type InfraIR,
   type DeployedResource,
   type DeployedResourceAction,
+  type DeployedResourceType,
   type ResourceMetadata,
 } from "@alzulejos/laranja-core";
+import type { PriorNodeLambda } from "./aws.js";
 
 export interface BuildResourcesArgs {
   ir: InfraIR;
@@ -39,10 +41,15 @@ export interface BuildResourcesArgs {
   missingEnv: string[];
   /**
    * Physical resource ids present in the stack BEFORE this deploy (from
-   * `getStackPhysicalIds`). A resource whose physical id is in this set is being
+   * `getStackSnapshot`). A resource whose physical id is in this set is being
    * UPDATED; anything else is CREATED. Empty on a first deploy → all CREATED.
    */
   priorPhysicalIds: Set<string>;
+  /**
+   * laranja node Lambdas present in the stack BEFORE this deploy. Any that the
+   * current IR no longer produces are reported as REMOVED. Empty on a first deploy.
+   */
+  priorNodeLambdas: PriorNodeLambda[];
 }
 
 /**
@@ -54,7 +61,7 @@ function functionName(ir: InfraIR, label: string): string {
 }
 
 export function buildDeployedResources(args: BuildResourcesArgs): DeployedResource[] {
-  const { ir, region, account, outputs, missingEnv, priorPhysicalIds } = args;
+  const { ir, region, account, outputs, missingEnv, priorPhysicalIds, priorNodeLambdas } = args;
 
   // env warnings are app-wide (one process.env, shared by every Lambda), so they
   // attach to each resource. `metadata` must be an object, never null.
@@ -68,6 +75,15 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
   // function name, the monitoring dashboard off its `<app>-<stage>` name.
   const actionFor = (physicalId: string): DeployedResourceAction =>
     priorPhysicalIds.has(physicalId) ? "UPDATED" : "CREATED";
+
+  // The physical Lambda names this deploy still produces. Any prior node Lambda
+  // NOT in here was deleted from code → reported as REMOVED below.
+  const liveFnNames = new Set<string>();
+  const live = (label: string): string => {
+    const fn = functionName(ir, label);
+    liveFnNames.add(fn);
+    return fn;
+  };
 
   const resources: DeployedResource[] = [];
 
@@ -92,7 +108,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: "http",
       type: "http",
-      action: actionFor(functionName(ir, "app")),
+      action: actionFor(live("app")),
       metadata: meta(),
       externalId: arn("app"),
       externalUrl: outputs.HttpUrl ?? null,
@@ -104,7 +120,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: cron.id,
       type: "cron",
-      action: actionFor(functionName(ir, label)),
+      action: actionFor(live(label)),
       // Store a ready-to-display label alongside the structured schedule so the
       // dashboard shows "Every minute" without re-deriving it from the cron string.
       metadata: meta({
@@ -128,7 +144,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: q.id,
       type: "queue",
-      action: actionFor(functionName(ir, label)),
+      action: actionFor(live(label)),
       metadata: meta({
         queueName: q.name,
         fifo: Boolean(q.fifo),
@@ -145,6 +161,51 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
       // Grouped Nest queues share their module's worker Lambda (label = workersId);
       // a standalone queue owns its own consumer function (label = handler name).
       externalId: arn(label),
+      externalUrl: null,
+    });
+  }
+
+  // REMOVED: any laranja node Lambda that was in the stack before but this deploy
+  // no longer produces (a cron/queue/worker deleted from code, or http dropped).
+  // Each deployment stores its own inventory as history, so this is just a row in
+  // THIS deploy's snapshot — no reconciliation against a persistent node needed.
+  const appPrefix = `${ir.app.name}-`;
+  const stageSuffix = `-${ir.app.stage}`;
+  // Best-effort friendly name: undo `fnName`'s `<app>-<label>-<stage>` wrapping.
+  const labelOf = (fn: string): string => {
+    let s = fn;
+    if (s.startsWith(appPrefix)) s = s.slice(appPrefix.length);
+    if (s.endsWith(stageSuffix)) s = s.slice(0, -stageSuffix.length);
+    return s;
+  };
+  for (const prior of priorNodeLambdas) {
+    if (liveFnNames.has(prior.functionName)) continue;
+    const isHttp = prior.logicalId.startsWith("HttpFn");
+    const type: DeployedResourceType = isHttp
+      ? "http"
+      : prior.logicalId.startsWith("Cron")
+        ? "cron"
+        : prior.logicalId.startsWith("Consumer")
+          ? "queue"
+          : "function"; // Worker<id>Fn — a shared worker module Lambda.
+    resources.push({
+      name: isHttp ? "http" : labelOf(prior.functionName),
+      type,
+      action: "REMOVED",
+      metadata: {},
+      externalId: `arn:aws:lambda:${region}:${account}:function:${prior.functionName}`,
+      externalUrl: null,
+    });
+  }
+
+  // A monitoring dashboard that existed before but is now switched off is REMOVED.
+  if (!ir.app.monitoring && priorPhysicalIds.has(dashboardName(ir.app.name, ir.app.stage))) {
+    resources.push({
+      name: "monitoring",
+      type: "dashboard",
+      action: "REMOVED",
+      metadata: {},
+      externalId: null,
       externalUrl: null,
     });
   }

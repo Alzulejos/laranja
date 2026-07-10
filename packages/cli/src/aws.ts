@@ -86,25 +86,62 @@ export async function listStackLambdas(region: string, stackName: string): Promi
 }
 
 /**
- * Snapshot the set of physical resource ids currently in a deployed stack, used
- * to decide per-resource CREATED vs UPDATED on the next deploy (a resource whose
- * physical id is already present is being modified, not created).
- *
- * Keyed by PhysicalResourceId because laranja pins deterministic names: a Lambda's
- * physical id is its `<app>-<label>-<stage>` function name and a dashboard's is
- * `<app>-<stage>` — the same values `report.ts` reconstructs. Returns an EMPTY set
- * when the stack doesn't exist yet (first deploy → everything is CREATED) and,
- * best-effort, on any other error so a telemetry hiccup never blocks a deploy.
+ * A laranja *node* Lambda discovered in a deployed stack — one of the functions
+ * that maps to a dashboard node (http proxy / cron / queue consumer / worker).
+ * Identified by its CDK logical-id prefix, which excludes CDK-internal helper
+ * Lambdas (log-retention, custom resources) that share the stack.
  */
-export async function getStackPhysicalIds(region: string, stackName: string): Promise<Set<string>> {
+export interface PriorNodeLambda {
+  logicalId: string;
+  functionName: string;
+}
+
+/**
+ * CDK logical ids for laranja's node Lambdas, from laranja-cdk `stack.ts`:
+ * `HttpFn`, `Cron<id>Fn`, `Consumer<id>Fn`, `Worker<id>Fn` (CDK appends a hash
+ * suffix, so match by prefix). Nothing CDK creates on its own matches these.
+ */
+const NODE_LAMBDA_LOGICAL_ID = /^(HttpFn|Cron.*Fn|Consumer.*Fn|Worker.*Fn)/;
+
+export interface StackSnapshot {
+  /**
+   * Every physical resource id in the stack — used to decide CREATED vs UPDATED
+   * (a resource whose pinned physical name is already present is being modified).
+   */
+  physicalIds: Set<string>;
+  /** laranja node Lambdas present before this deploy — used to detect REMOVED. */
+  nodeLambdas: PriorNodeLambda[];
+}
+
+/**
+ * Snapshot a deployed stack BEFORE the next deploy, so the resource report can
+ * label each resource CREATED / UPDATED / REMOVED against live AWS state (no
+ * local state to persist — the stack itself is the source of truth).
+ *
+ * laranja pins deterministic physical names — a Lambda's is its `<app>-<label>-<stage>`
+ * function name, a dashboard's is `<app>-<stage>` — the same values `report.ts`
+ * reconstructs, so membership checks line up. Returns an EMPTY snapshot when the
+ * stack doesn't exist yet (first deploy → everything is CREATED) and, best-effort,
+ * on any other error so a telemetry hiccup never blocks a deploy.
+ */
+export async function getStackSnapshot(region: string, stackName: string): Promise<StackSnapshot> {
   const cfn = new CloudFormationClient({ region });
-  const ids = new Set<string>();
+  const physicalIds = new Set<string>();
+  const nodeLambdas: PriorNodeLambda[] = [];
   let nextToken: string | undefined;
   try {
     do {
       const res = await cfn.send(new ListStackResourcesCommand({ StackName: stackName, NextToken: nextToken }));
       for (const r of res.StackResourceSummaries ?? []) {
-        if (r.PhysicalResourceId) ids.add(r.PhysicalResourceId);
+        if (r.PhysicalResourceId) physicalIds.add(r.PhysicalResourceId);
+        if (
+          r.ResourceType === "AWS::Lambda::Function" &&
+          r.LogicalResourceId &&
+          r.PhysicalResourceId &&
+          NODE_LAMBDA_LOGICAL_ID.test(r.LogicalResourceId)
+        ) {
+          nodeLambdas.push({ logicalId: r.LogicalResourceId, functionName: r.PhysicalResourceId });
+        }
       }
       nextToken = res.NextToken;
     } while (nextToken);
@@ -112,9 +149,9 @@ export async function getStackPhysicalIds(region: string, stackName: string): Pr
     // Missing stack (ValidationError) or any transient error → treat as no prior
     // state. Worst case a resource is labelled CREATED instead of UPDATED, which
     // is exactly the pre-existing behaviour, so this never regresses a deploy.
-    return new Set();
+    return { physicalIds: new Set(), nodeLambdas: [] };
   }
-  return ids;
+  return { physicalIds, nodeLambdas };
 }
 
 /**

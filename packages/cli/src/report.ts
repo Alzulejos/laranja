@@ -25,6 +25,7 @@ import {
   handlerName,
   type InfraIR,
   type DeployedResource,
+  type DeployedResourceAction,
   type ResourceMetadata,
 } from "@alzulejos/laranja-core";
 
@@ -36,6 +37,12 @@ export interface BuildResourcesArgs {
   outputs: Record<string, string>;
   /** env keys with no value at deploy — surfaced as per-resource `metadata.warnings`. */
   missingEnv: string[];
+  /**
+   * Physical resource ids present in the stack BEFORE this deploy (from
+   * `getStackPhysicalIds`). A resource whose physical id is in this set is being
+   * UPDATED; anything else is CREATED. Empty on a first deploy → all CREATED.
+   */
+  priorPhysicalIds: Set<string>;
 }
 
 /**
@@ -47,7 +54,7 @@ function functionName(ir: InfraIR, label: string): string {
 }
 
 export function buildDeployedResources(args: BuildResourcesArgs): DeployedResource[] {
-  const { ir, region, account, outputs, missingEnv } = args;
+  const { ir, region, account, outputs, missingEnv, priorPhysicalIds } = args;
 
   // env warnings are app-wide (one process.env, shared by every Lambda), so they
   // attach to each resource. `metadata` must be an object, never null.
@@ -55,6 +62,12 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     missingEnv.length ? { ...extra, warnings: missingEnv } : { ...extra };
   const arn = (label: string): string =>
     `arn:aws:lambda:${region}:${account}:function:${functionName(ir, label)}`;
+
+  // A resource whose pinned physical name was already in the stack is being
+  // modified; otherwise it's new. Lambdas key off their `<app>-<label>-<stage>`
+  // function name, the monitoring dashboard off its `<app>-<stage>` name.
+  const actionFor = (physicalId: string): DeployedResourceAction =>
+    priorPhysicalIds.has(physicalId) ? "UPDATED" : "CREATED";
 
   const resources: DeployedResource[] = [];
 
@@ -68,7 +81,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: "monitoring",
       type: "dashboard",
-      action: "CREATED",
+      action: actionFor(name),
       metadata: meta(),
       externalId: null,
       externalUrl: `https://${region}.console.aws.amazon.com/cloudwatch/home?region=${region}#dashboards/dashboard/${name}`,
@@ -79,7 +92,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: "http",
       type: "http",
-      action: "CREATED",
+      action: actionFor(functionName(ir, "app")),
       metadata: meta(),
       externalId: arn("app"),
       externalUrl: outputs.HttpUrl ?? null,
@@ -87,10 +100,11 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
   }
 
   for (const cron of ir.crons) {
+    const label = cron.workersId ?? handlerLabel(cron);
     resources.push({
       name: cron.id,
       type: "cron",
-      action: "CREATED",
+      action: actionFor(functionName(ir, label)),
       // Store a ready-to-display label alongside the structured schedule so the
       // dashboard shows "Every minute" without re-deriving it from the cron string.
       metadata: meta({
@@ -99,7 +113,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
       }),
       // Grouped Nest crons run in their module's shared worker Lambda (label =
       // workersId); a standalone cron owns its own function (label = handler name).
-      externalId: arn(cron.workersId ?? handlerLabel(cron)),
+      externalId: arn(label),
       externalUrl: null,
     });
   }
@@ -110,10 +124,11 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
   const idByQueueName = new Map(ir.queues.map((q) => [q.name, q.id]));
 
   for (const q of ir.queues) {
+    const label = q.workersId ?? handlerName(q);
     resources.push({
       name: q.id,
       type: "queue",
-      action: "CREATED",
+      action: actionFor(functionName(ir, label)),
       metadata: meta({
         queueName: q.name,
         fifo: Boolean(q.fifo),
@@ -129,7 +144,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
       }),
       // Grouped Nest queues share their module's worker Lambda (label = workersId);
       // a standalone queue owns its own consumer function (label = handler name).
-      externalId: arn(q.workersId ?? handlerName(q)),
+      externalId: arn(label),
       externalUrl: null,
     });
   }

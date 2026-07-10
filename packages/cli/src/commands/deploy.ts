@@ -11,7 +11,7 @@ import {
   resolveDeclaredEnv,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
-import { getAccountId, isBootstrapped } from "../aws.js";
+import { getAccountId, getStackPhysicalIds, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
@@ -101,6 +101,10 @@ export async function deploy(
     }
   }
 
+  // Snapshot what's already in the stack BEFORE we deploy, so the resource report
+  // can label each resource CREATED vs UPDATED (empty on a first deploy).
+  const priorPhysicalIds = await getStackPhysicalIds(region, stackName);
+
   step("deploy to AWS");
   const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
 
@@ -136,7 +140,7 @@ export async function deploy(
   // Report the outcome + deployed inventory to the dashboard (success only POSTs
   // resources, per the lifecycle contract).
   step("report success");
-  const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
+  const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing, priorPhysicalIds });
   await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
   await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey, projectId));
   ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);

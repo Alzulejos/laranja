@@ -86,6 +86,38 @@ export async function listStackLambdas(region: string, stackName: string): Promi
 }
 
 /**
+ * Snapshot the set of physical resource ids currently in a deployed stack, used
+ * to decide per-resource CREATED vs UPDATED on the next deploy (a resource whose
+ * physical id is already present is being modified, not created).
+ *
+ * Keyed by PhysicalResourceId because laranja pins deterministic names: a Lambda's
+ * physical id is its `<app>-<label>-<stage>` function name and a dashboard's is
+ * `<app>-<stage>` — the same values `report.ts` reconstructs. Returns an EMPTY set
+ * when the stack doesn't exist yet (first deploy → everything is CREATED) and,
+ * best-effort, on any other error so a telemetry hiccup never blocks a deploy.
+ */
+export async function getStackPhysicalIds(region: string, stackName: string): Promise<Set<string>> {
+  const cfn = new CloudFormationClient({ region });
+  const ids = new Set<string>();
+  let nextToken: string | undefined;
+  try {
+    do {
+      const res = await cfn.send(new ListStackResourcesCommand({ StackName: stackName, NextToken: nextToken }));
+      for (const r of res.StackResourceSummaries ?? []) {
+        if (r.PhysicalResourceId) ids.add(r.PhysicalResourceId);
+      }
+      nextToken = res.NextToken;
+    } while (nextToken);
+  } catch {
+    // Missing stack (ValidationError) or any transient error → treat as no prior
+    // state. Worst case a resource is labelled CREATED instead of UPDATED, which
+    // is exactly the pre-existing behaviour, so this never regresses a deploy.
+    return new Set();
+  }
+  return ids;
+}
+
+/**
  * Tear a deployed stack down by name — no synth needed, CloudFormation deletes
  * by stack name. Returns false if there's nothing to delete (no such stack).
  *

@@ -150,4 +150,7 @@ tsx packages/cli/src/cli.ts plan examples/nestjs
 
 ## License
 
-TBD — laranja is in early development.
+The laranja client packages in this repository (the CLI, decorators, and supporting
+libraries you install to build and deploy your app) are licensed under the
+[Apache License 2.0](LICENSE). The hosted laranja backend service is proprietary and
+is not part of this repository.

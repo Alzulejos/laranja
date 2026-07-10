@@ -2,6 +2,7 @@
   "name": "@alzulejos/laranja-docs",
   "version": "0.1.4",
   "description": "Canonical laranja documentation, parsed and exported as a module for any frontend to render.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",

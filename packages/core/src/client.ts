@@ -56,8 +56,8 @@ export class ApiRequestError extends Error {
   }
 }
 
-/** Base URL of the laranja dashboard web app. */
-export const DASHBOARD_URL = "http://localhost:5173";
+/** Base URL of the laranja dashboard web app. Override with `LARANJA_DASHBOARD_URL` for local dev. */
+export const DASHBOARD_URL = (process.env.LARANJA_DASHBOARD_URL ?? "https://laranja.io/app").replace(/\/+$/, "");
 
 /** Dashboard page where users create / manage their API keys. */
 export const DASHBOARD_KEYS_URL = `${DASHBOARD_URL}/user`;

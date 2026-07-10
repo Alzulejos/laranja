@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-decorators",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -16,6 +16,6 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.658.0",
-    "@alzulejos/laranja-core": "0.1.7"
+    "@alzulejos/laranja-core": "0.1.8"
   }
 }

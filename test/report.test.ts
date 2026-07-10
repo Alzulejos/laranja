@@ -34,6 +34,7 @@ describe("buildDeployedResources", () => {
       account,
       outputs: { HttpUrl: "https://abc.lambda-url.eu-west-1.on.aws/" },
       missingEnv: [],
+      priorPhysicalIds: new Set(),
     });
 
     expect(res.map((r) => [r.name, r.type])).toEqual([
@@ -49,7 +50,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/jobs.ts", exportName: "cleanup", source: "src/jobs.ts:1", id: "cleanup", schedule: { kind: "rate", value: 1, unit: "day" } },
       ],
     });
-    const res = buildDeployedResources({ ir, region, account, outputs: { HttpUrl: "https://url/" }, missingEnv: [] });
+    const res = buildDeployedResources({ ir, region, account, outputs: { HttpUrl: "https://url/" }, missingEnv: [], priorPhysicalIds: new Set() });
 
     const http = res.find((r) => r.type === "http")!;
     const cron = res.find((r) => r.type === "cron")!;
@@ -66,7 +67,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders.fifo", fifo: true, batchSize: 5 },
       ],
     });
-    const [queue] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const [queue] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set() });
     expect(queue.metadata).toEqual({
       queueName: "orders.fifo",
       fifo: true,
@@ -85,7 +86,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/q.ts", exportName: "deadLetters", source: "src/q.ts:2", id: "dead", name: "dead-queue" },
       ],
     });
-    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set() });
     const orders = res.find((r) => r.name === "orders")!;
     const dead = res.find((r) => r.name === "dead")!;
     expect(orders.metadata.dlq).toEqual({ queue: "dead", maxReceiveCount: 3 });
@@ -100,7 +101,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/jobs.ts", exportName: "sweep", source: "src/jobs.ts:1", id: "sweep", schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws" } },
       ],
     });
-    const [cron] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const [cron] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set() });
     // The FE reads `description` directly; the structured schedule is kept alongside it.
     expect(cron.metadata).toEqual({
       schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws", description: "Every minute" },
@@ -109,9 +110,29 @@ describe("buildDeployedResources", () => {
 
   it("surfaces missing env keys as per-resource metadata.warnings", () => {
     const ir = makeIr();
-    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: ["STRIPE_KEY", "DB_URL"] });
+    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: ["STRIPE_KEY", "DB_URL"], priorPhysicalIds: new Set() });
     expect(http.metadata.warnings).toEqual(["STRIPE_KEY", "DB_URL"]);
     expect(http.externalUrl).toBeNull();
+  });
+
+  it("labels resources UPDATED when their pinned physical id already exists, CREATED otherwise", () => {
+    const ir = makeIr({
+      crons: [
+        { style: "function", file: "src/jobs.ts", exportName: "cleanup", source: "src/jobs.ts:1", id: "cleanup", schedule: { kind: "rate", value: 1, unit: "day" } },
+      ],
+    });
+    // http's Lambda (myapp-app-dev) is already in the stack; the cron (myapp-cleanup-dev) is new.
+    const priorPhysicalIds = new Set(["myapp-app-dev"]);
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds });
+
+    expect(res.find((r) => r.type === "http")!.action).toBe("UPDATED");
+    expect(res.find((r) => r.type === "cron")!.action).toBe("CREATED");
+  });
+
+  it("labels everything CREATED on a first deploy (no prior stack resources)", () => {
+    const ir = makeIr();
+    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set() });
+    expect(http.action).toBe("CREATED");
   });
 
   it("reports the full inventory every time (http + every cron + every queue)", () => {
@@ -123,7 +144,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders-queue" },
       ],
     });
-    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set() });
     expect(res.map((r) => r.name)).toEqual(["http", "cleanup", "orders"]);
   });
 });

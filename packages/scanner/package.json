@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-scanner",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,7 +15,7 @@
     "registry": "https://npm.pkg.github.com"
   },
   "dependencies": {
-    "@alzulejos/laranja-core": "0.2.0",
+    "@alzulejos/laranja-core": "0.2.1",
     "ts-morph": "^23.0.0"
   }
 }

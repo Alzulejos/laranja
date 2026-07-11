@@ -26,7 +26,6 @@ import {
   type InfraIR,
   type DeployedResource,
   type DeployedResourceAction,
-  type DeployedResourceType,
   type ResourceMetadata,
 } from "@alzulejos/laranja-core";
 import type { PriorNodeLambda } from "./aws.js";
@@ -46,10 +45,18 @@ export interface BuildResourcesArgs {
    */
   priorPhysicalIds: Set<string>;
   /**
-   * laranja node Lambdas present in the stack BEFORE this deploy. Any that the
-   * current IR no longer produces are reported as REMOVED. Empty on a first deploy.
+   * laranja node Lambdas present in the stack BEFORE this deploy. Used to detect a
+   * REMOVED http proxy (it has no per-resource sibling). Empty on a first deploy.
    */
   priorNodeLambdas: PriorNodeLambda[];
+  /**
+   * EventBridge schedule names present before this deploy (`<app>-<id>-<stage>`),
+   * one per logical cron. Any not produced by this deploy → REMOVED cron — this is
+   * how a grouped cron's removal is seen even though its worker Lambda survives.
+   */
+  priorScheduleNames: Set<string>;
+  /** SQS queue names present before this deploy, one per logical queue → REMOVED. */
+  priorQueueNames: Set<string>;
 }
 
 /**
@@ -61,7 +68,8 @@ function functionName(ir: InfraIR, label: string): string {
 }
 
 export function buildDeployedResources(args: BuildResourcesArgs): DeployedResource[] {
-  const { ir, region, account, outputs, missingEnv, priorPhysicalIds, priorNodeLambdas } = args;
+  const { ir, region, account, outputs, missingEnv, priorPhysicalIds, priorNodeLambdas, priorScheduleNames, priorQueueNames } =
+    args;
 
   // env warnings are app-wide (one process.env, shared by every Lambda), so they
   // attach to each resource. `metadata` must be an object, never null.
@@ -75,15 +83,6 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
   // function name, the monitoring dashboard off its `<app>-<stage>` name.
   const actionFor = (physicalId: string): DeployedResourceAction =>
     priorPhysicalIds.has(physicalId) ? "UPDATED" : "CREATED";
-
-  // The physical Lambda names this deploy still produces. Any prior node Lambda
-  // NOT in here was deleted from code → reported as REMOVED below.
-  const liveFnNames = new Set<string>();
-  const live = (label: string): string => {
-    const fn = functionName(ir, label);
-    liveFnNames.add(fn);
-    return fn;
-  };
 
   const resources: DeployedResource[] = [];
 
@@ -108,7 +107,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: "http",
       type: "http",
-      action: actionFor(live("app")),
+      action: actionFor(functionName(ir, "app")),
       metadata: meta(),
       externalId: arn("app"),
       externalUrl: outputs.HttpUrl ?? null,
@@ -120,7 +119,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: cron.id,
       type: "cron",
-      action: actionFor(live(label)),
+      action: actionFor(functionName(ir, label)),
       // Store a ready-to-display label alongside the structured schedule so the
       // dashboard shows "Every minute" without re-deriving it from the cron string.
       metadata: meta({
@@ -144,7 +143,7 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     resources.push({
       name: q.id,
       type: "queue",
-      action: actionFor(live(label)),
+      action: actionFor(functionName(ir, label)),
       metadata: meta({
         queueName: q.name,
         fifo: Boolean(q.fifo),
@@ -165,35 +164,60 @@ export function buildDeployedResources(args: BuildResourcesArgs): DeployedResour
     });
   }
 
-  // REMOVED: any laranja node Lambda that was in the stack before but this deploy
-  // no longer produces (a cron/queue/worker deleted from code, or http dropped).
-  // Each deployment stores its own inventory as history, so this is just a row in
-  // THIS deploy's snapshot — no reconciliation against a persistent node needed.
+  // REMOVED: a logical resource that was in the stack before but this deploy no
+  // longer produces. Detection keys off each resource's OWN physical CFN object, not
+  // the Lambda — so grouped Nest crons/queues (many sharing one worker Lambda) are
+  // covered: the shared Lambda survives, but the removed handler's schedule / queue
+  // disappears. Each deployment stores its own inventory as history, so this is just
+  // a row in THIS deploy's snapshot — no reconciliation against a persistent node.
   const appPrefix = `${ir.app.name}-`;
   const stageSuffix = `-${ir.app.stage}`;
   // Best-effort friendly name: undo `fnName`'s `<app>-<label>-<stage>` wrapping.
-  const labelOf = (fn: string): string => {
-    let s = fn;
+  const labelOf = (name: string): string => {
+    let s = name;
     if (s.startsWith(appPrefix)) s = s.slice(appPrefix.length);
     if (s.endsWith(stageSuffix)) s = s.slice(0, -stageSuffix.length);
     return s;
   };
-  for (const prior of priorNodeLambdas) {
-    if (liveFnNames.has(prior.functionName)) continue;
-    const isHttp = prior.logicalId.startsWith("HttpFn");
-    const type: DeployedResourceType = isHttp
-      ? "http"
-      : prior.logicalId.startsWith("Cron")
-        ? "cron"
-        : prior.logicalId.startsWith("Consumer")
-          ? "queue"
-          : "function"; // Worker<id>Fn — a shared worker module Lambda.
+
+  // cron: one EventBridge schedule per cron, named `<app>-<id>-<stage>`.
+  const liveScheduleNames = new Set(ir.crons.map((c) => functionName(ir, c.id)));
+  for (const name of priorScheduleNames) {
+    if (liveScheduleNames.has(name)) continue;
     resources.push({
-      name: isHttp ? "http" : labelOf(prior.functionName),
-      type,
+      name: labelOf(name),
+      type: "cron",
       action: "REMOVED",
       metadata: {},
-      externalId: `arn:aws:lambda:${region}:${account}:function:${prior.functionName}`,
+      externalId: `arn:aws:scheduler:${region}:${account}:schedule/default/${name}`,
+      externalUrl: null,
+    });
+  }
+
+  // queue: one SQS queue per declared queue, named `q.name` (DLQ targets are declared
+  // queues too, so a surviving queue always maps back to an ir.queue).
+  const liveQueueNames = new Set(ir.queues.map((q) => q.name));
+  for (const name of priorQueueNames) {
+    if (liveQueueNames.has(name)) continue;
+    resources.push({
+      name,
+      type: "queue",
+      action: "REMOVED",
+      metadata: {},
+      externalId: `arn:aws:sqs:${region}:${account}:${name}`,
+      externalUrl: null,
+    });
+  }
+
+  // http: the proxy Lambda owns no per-resource sibling, so diff it off the Lambda
+  // snapshot — present before, gone now (the app dropped its `http()` marker).
+  if (!ir.http && priorNodeLambdas.some((l) => l.logicalId.startsWith("HttpFn"))) {
+    resources.push({
+      name: "http",
+      type: "http",
+      action: "REMOVED",
+      metadata: {},
+      externalId: arn("app"),
       externalUrl: null,
     });
   }

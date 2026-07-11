@@ -148,6 +148,8 @@ export async function deploy(
     missingEnv: missing,
     priorPhysicalIds: priorStack.physicalIds,
     priorNodeLambdas: priorStack.nodeLambdas,
+    priorScheduleNames: priorStack.scheduleNames,
+    priorQueueNames: priorStack.queueNames,
   });
   await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
   await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey, projectId));

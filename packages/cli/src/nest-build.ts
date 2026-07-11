@@ -51,16 +51,28 @@ function resolveBuildDirs(projectDir: string): { sourceRoot: string; outDir: str
  */
 export function resolveNestCompiledEntry(projectDir: string, sourceEntry: string): string {
   const { sourceRoot, outDir } = resolveBuildDirs(projectDir);
-  // src/main.ts -> main.ts -> dist/main.js
-  const relFromSource = path.relative(sourceRoot, sourceEntry);
-  const compiledRel = path.join(outDir, relFromSource).replace(/\.(ts|tsx|mts|cts)$/, ".js");
-  const abs = path.join(projectDir, compiledRel);
-  if (!existsSync(abs)) {
-    throw new Error(
-      `Nest build output not found at ${compiledRel}. Build your app first ` +
-        `(e.g. \`npm run build\`) so laranja can package the compiled output — ` +
-        `Nest's dependency injection needs the metadata your build emits.`,
-    );
+  const jsEntry = sourceEntry.replace(/\.(ts|tsx|mts|cts)$/, ".js");
+
+  // tsc mirrors each file under `outDir` at its path relative to the *computed*
+  // rootDir — which is NOT necessarily `nest-cli.json`'s `sourceRoot`. tsc infers
+  // rootDir as the common ancestor of all compiled files, so a single `.ts` outside
+  // `src` widens it to the project root. laranja projects always have a root-level
+  // `laranja.config.ts`, so `src/main.ts` typically lands at `dist/src/main.js`, not
+  // `dist/main.js`. Check both layouts (existence disambiguates; `deleteOutDir`
+  // leaves only the real one). A webpacked single-file build is the first candidate.
+  const candidates = [
+    // rootDir === sourceRoot  ->  dist/main.js
+    path.join(outDir, path.relative(sourceRoot, jsEntry)),
+    // rootDir === projectDir  ->  dist/src/main.js
+    path.join(outDir, jsEntry),
+  ];
+  for (const rel of candidates) {
+    const abs = path.join(projectDir, rel);
+    if (existsSync(abs)) return abs;
   }
-  return abs;
+  throw new Error(
+    `Nest build output not found (looked for ${candidates.join(" and ")}). ` +
+      `Build your app first (e.g. \`npm run build\`) so laranja can package the ` +
+      `compiled output — Nest's dependency injection needs the metadata your build emits.`,
+  );
 }

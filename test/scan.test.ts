@@ -478,6 +478,19 @@ describe("env() discovery", () => {
     expect(ir.envKeys).toEqual(["STRIPE_KEY"]);
   });
 
+  test("rejects a malformed env name (e.g. a bracket that slipped inside the quotes)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate, env } from "@alzulejos/laranja-decorators";
+        export async function job() {
+          return env("MY_SECRET)"); // typo: ')' inside the string
+        }
+        cron(rate(1, "hour"), job);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false }) })).toThrow(/Invalid env var name "MY_SECRET\)"/);
+  });
+
   test("ignores an env() that isn't laranja's helper", () => {
     const dir = makeProject({
       "src/jobs.ts": `

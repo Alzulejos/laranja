@@ -35,13 +35,31 @@ export function resolveDeclaredEnv(
 }
 
 /**
+ * A valid environment-variable NAME: a letter or underscore, then letters, digits,
+ * or underscores. This is the conventional POSIX/shell shape and a superset of what
+ * AWS Lambda accepts, so anything failing this can never be a real env var — it's a
+ * typo (e.g. `env("MY_SECRET)")`, where the `)` slipped inside the quotes).
+ */
+export const ENV_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Whether `key` is a syntactically valid environment-variable name. */
+export function isValidEnvName(key: string): boolean {
+  return ENV_NAME_PATTERN.test(key);
+}
+
+/**
  * The CloudFormation Parameter logical id for an env key. Each code-discovered
  * `env("NAME")` becomes a stack Parameter (so the value is supplied at deploy
  * time, never baked into the template). Logical ids must be alphanumeric, so
  * non-alphanumerics are stripped — this is the single source of truth shared by
  * the stack (which declares the Parameter) and the deploy step (which supplies
- * its value). Two keys that collide after stripping surface as a duplicate-id
- * error at synth, which is the desired loud failure.
+ * its value).
+ *
+ * NOTE: the stripping is lossy — `MY_SECRET` and `MYSECRET` both map to
+ * `EnvMYSECRET`, and two such keys collide as a duplicate-construct error at synth.
+ * Validated names (see `isValidEnvName`) make that rare, but a fully collision-free
+ * scheme (hash suffix) is a breaking change: the CLI and the server's bundled synth
+ * both compute this id, so it must only change in a coordinated release of both.
  */
 export function envParamName(key: string): string {
   return `Env${key.replace(/[^A-Za-z0-9]/g, "")}`;

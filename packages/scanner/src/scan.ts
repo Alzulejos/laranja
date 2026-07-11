@@ -4,7 +4,9 @@ import { Project, Node } from "ts-morph";
 import type { ClassDeclaration, MethodDeclaration, SourceFile } from "ts-morph";
 import {
   assertSchedule,
+  ENV_NAME_PATTERN,
   intervalToSchedule,
+  isValidEnvName,
   type ComputeConfig,
   type CronIR,
   type Framework,
@@ -92,7 +94,7 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
       collectFromRegistrations(rel, sf, regImports, crons, queues);
     }
 
-    collectEnvKeys(sf, envKeys);
+    collectEnvKeys(rel, sf, envKeys);
 
     if (framework === "express") {
       collectExpressRoutes(rel, sf, routes);
@@ -895,7 +897,7 @@ function envHelperNames(sf: SourceFile): Set<string> {
  * auditable). Location is irrelevant: a call buried in a handler body counts the
  * same as one at module scope, because this is pure source analysis.
  */
-function collectEnvKeys(sf: SourceFile, keys: Set<string>): void {
+function collectEnvKeys(rel: string, sf: SourceFile, keys: Set<string>): void {
   const names = envHelperNames(sf);
   if (names.size === 0) return;
 
@@ -905,7 +907,19 @@ function collectEnvKeys(sf: SourceFile, keys: Set<string>): void {
     if (!Node.isIdentifier(callee) || !names.has(callee.getText())) return;
     const arg = node.getArguments()[0];
     if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) {
-      keys.add(arg.getLiteralText());
+      const key = arg.getLiteralText();
+      // A malformed name (a stray char that slipped inside the quotes, e.g.
+      // `env("MY_SECRET)")`) can never be a real env var — fail loudly here with a
+      // location, rather than downstream as a cryptic duplicate-construct error at
+      // synth once non-alphanumerics are stripped from the CFN Parameter id.
+      if (!isValidEnvName(key)) {
+        throw new Error(
+          `Invalid env var name ${JSON.stringify(key)} in ${rel}:${arg.getStartLineNumber()} — ` +
+            `env var names must match ${ENV_NAME_PATTERN.source} (letters, digits, underscores; ` +
+            `not starting with a digit). Check for a typo like a bracket inside the quotes.`,
+        );
+      }
+      keys.add(key);
     }
   });
 }

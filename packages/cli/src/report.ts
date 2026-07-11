@@ -53,10 +53,11 @@ export interface BuildResourcesArgs {
    * EventBridge schedule names present before this deploy (`<app>-<id>-<stage>`),
    * one per logical cron. Any not produced by this deploy → REMOVED cron — this is
    * how a grouped cron's removal is seen even though its worker Lambda survives.
+   * Omitted → treated as empty (no prior state, e.g. a first deploy).
    */
-  priorScheduleNames: Set<string>;
+  priorScheduleNames?: Set<string>;
   /** SQS queue names present before this deploy, one per logical queue → REMOVED. */
-  priorQueueNames: Set<string>;
+  priorQueueNames?: Set<string>;
 }
 
 /**
@@ -68,8 +69,17 @@ function functionName(ir: InfraIR, label: string): string {
 }
 
 export function buildDeployedResources(args: BuildResourcesArgs): DeployedResource[] {
-  const { ir, region, account, outputs, missingEnv, priorPhysicalIds, priorNodeLambdas, priorScheduleNames, priorQueueNames } =
-    args;
+  const {
+    ir,
+    region,
+    account,
+    outputs,
+    missingEnv,
+    priorPhysicalIds,
+    priorNodeLambdas,
+    priorScheduleNames = new Set<string>(),
+    priorQueueNames = new Set<string>(),
+  } = args;
 
   // env warnings are app-wide (one process.env, shared by every Lambda), so they
   // attach to each resource. `metadata` must be an object, never null.

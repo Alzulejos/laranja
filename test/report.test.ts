@@ -136,15 +136,20 @@ describe("buildDeployedResources", () => {
     expect(http.action).toBe("CREATED");
   });
 
-  it("reports a REMOVED row for a prior node Lambda the current IR no longer produces", () => {
-    // Prior stack had http + a "cleanup" cron; the new IR keeps only http.
+  it("reports a REMOVED cron via its vanished schedule (its Lambda may still exist)", () => {
+    // Prior stack had http + a "cleanup" cron; the new IR keeps only http. The cron's
+    // schedule is gone from the stack, which is what reveals the removal.
     const ir = makeIr();
-    const priorPhysicalIds = new Set(["myapp-app-dev", "myapp-cleanup-dev"]);
-    const priorNodeLambdas = [
-      { logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" },
-      { logicalId: "CroncleanupFn2E3F4A5B", functionName: "myapp-cleanup-dev" },
-    ];
-    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds, priorNodeLambdas });
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-app-dev", "myapp-cleanup-dev"]),
+      priorNodeLambdas: [{ logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" }],
+      priorScheduleNames: new Set(["myapp-cleanup-dev"]),
+    });
 
     const removed = res.filter((r) => r.action === "REMOVED");
     expect(removed).toHaveLength(1);
@@ -152,10 +157,59 @@ describe("buildDeployedResources", () => {
       name: "cleanup",
       type: "cron",
       action: "REMOVED",
-      externalId: "arn:aws:lambda:eu-west-1:123456789012:function:myapp-cleanup-dev",
+      externalId: "arn:aws:scheduler:eu-west-1:123456789012:schedule/default/myapp-cleanup-dev",
     });
     // http still exists this deploy → UPDATED, not REMOVED.
     expect(res.find((r) => r.type === "http")!.action).toBe("UPDATED");
+  });
+
+  it("reports REMOVED for a grouped Nest cron/queue whose shared worker Lambda survives", () => {
+    // "sweep" cron + "emails" queue still live on the AppModule worker Lambda; the
+    // prior stack also had a grouped "oldjob" cron and "oldqueue" queue, now deleted
+    // from code. The worker Lambda is unchanged, so ONLY the schedule/queue diff can
+    // surface these removals.
+    const ir = makeIr({
+      http: undefined,
+      crons: [{ style: "method", file: "src/app.ts", className: "Jobs", method: "sweep", source: "src/app.ts:1", id: "sweep", workersId: "AppModule", schedule: { kind: "rate", value: 1, unit: "minute" } }],
+      queues: [{ style: "method", file: "src/app.ts", className: "Mailer", method: "send", source: "src/app.ts:1", id: "emails", name: "emails", workersId: "AppModule" }],
+      workers: [{ id: "AppModule", handlerEntry: "src/app.ts", appExport: "AppModule" }],
+    } as Partial<InfraIR>);
+
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-AppModule-dev"]),
+      priorNodeLambdas: [{ logicalId: "WorkerAppModuleFn1234", functionName: "myapp-AppModule-dev" }],
+      priorScheduleNames: new Set(["myapp-sweep-dev", "myapp-oldjob-dev"]),
+      priorQueueNames: new Set(["emails", "oldqueue"]),
+    });
+
+    const removed = res.filter((r) => r.action === "REMOVED").map((r) => [r.name, r.type]);
+    expect(removed).toEqual([
+      ["oldjob", "cron"],
+      ["oldqueue", "queue"],
+    ]);
+    // The surviving grouped resources are still reported (as UPDATED), never removed.
+    expect(res.find((r) => r.name === "sweep")!.action).toBe("UPDATED");
+    expect(res.find((r) => r.name === "emails")!.action).toBe("UPDATED");
+  });
+
+  it("reports a REMOVED http proxy when the app drops its http() marker", () => {
+    const ir = makeIr({ http: undefined } as Partial<InfraIR>);
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-app-dev"]),
+      priorNodeLambdas: [{ logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" }],
+    });
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ name: "http", type: "http", action: "REMOVED" });
   });
 
   it("does not report REMOVED for a CDK-internal helper Lambda (not a laranja node)", () => {

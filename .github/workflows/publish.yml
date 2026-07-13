@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, prod, feat/*, fix/*]
+    branches: [main, prod, feat/*, fix/*, chore/*]
 
 permissions:
   contents: read

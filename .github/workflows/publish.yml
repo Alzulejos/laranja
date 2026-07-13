@@ -6,7 +6,6 @@ on:
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   verify:
@@ -31,13 +30,15 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
+    # NPM_TOKEN lives in the Production environment's secrets.
+    environment: production
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com
+          registry-url: https://registry.npmjs.org
           scope: "@alzulejos"
 
       - run: npm ci
@@ -50,9 +51,9 @@ jobs:
       - name: Rewrite entry points to dist (CI-only)
         run: node scripts/prepare-publish.mjs
 
-      - name: Publish to GitHub Packages
+      - name: Publish to npm
         env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           # dependency order: dependents published after their deps

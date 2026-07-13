@@ -30,8 +30,10 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
-    # NPM_TOKEN lives in the Production environment's secrets.
     environment: production
+    permissions:
+      contents: read
+      id-token: write # OIDC: lets npm verify this workflow's identity (trusted publishing) — no token
     steps:
       - uses: actions/checkout@v4
 
@@ -40,6 +42,10 @@ jobs:
           node-version: 22
           registry-url: https://registry.npmjs.org
           scope: "@alzulejos"
+
+      # Trusted publishing requires npm >= 11.5.1; node 22 ships an older npm.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
 
       - run: npm ci
 
@@ -51,9 +57,7 @@ jobs:
       - name: Rewrite entry points to dist (CI-only)
         run: node scripts/prepare-publish.mjs
 
-      - name: Publish to npm
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish to npm (OIDC trusted publishing — no token)
         run: |
           set -euo pipefail
           # dependency order: dependents published after their deps

@@ -69,9 +69,12 @@ restructuring.
 Two things to know:
 
 - **Build before you deploy.** laranja packages your compiled output (`nest build`
-  → `dist/`), because Nest's dependency injection relies on the decorator
-  metadata your own TypeScript build emits. Run your build first (a stale/missing
-  `dist/` fails the deploy with a clear message).
+  → `dist/`), because Nest's dependency injection relies on the decorator metadata
+  your own TypeScript build emits. laranja deploys what you build — it doesn't run
+  your build for you — so run `nest build` yourself after every code change.
+  Deploying without a `dist/` fails with a clear message, but a **stale** `dist/`
+  (source edited since your last build) deploys silently as outdated code, so make
+  the build part of your deploy step (e.g. `nest build && laranja deploy`).
 - **Use the default Express platform.** The Fastify adapter isn't supported yet.
 
 ## Routing, middleware, and `STAGE`

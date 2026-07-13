@@ -56,8 +56,8 @@ export class ApiRequestError extends Error {
   }
 }
 
-/** Base URL of the laranja dashboard web app. */
-export const DASHBOARD_URL = "http://localhost:5173";
+/** Base URL of the laranja dashboard web app. Override with `LARANJA_DASHBOARD_URL` for local dev. */
+export const DASHBOARD_URL = (process.env.LARANJA_DASHBOARD_URL ?? "https://laranja.io/app").replace(/\/+$/, "");
 
 /** Dashboard page where users create / manage their API keys. */
 export const DASHBOARD_KEYS_URL = `${DASHBOARD_URL}/user`;
@@ -291,17 +291,19 @@ export function postReport(
 /**
  * `PATCH /v1/deployment/:id` — advance a deployment's status. Sent with
  * `{ status: "STARTED", region }` before touching AWS, then `{ status: "SUCCESS"
- * | "FAILED" }` once the deploy settles. The server resolves the project from
- * the API key, so the deployment id (in the URL) is the only context needed.
+ * | "FAILED" }` once the deploy settles. The dashboard `projectId` rides in the
+ * `x-project-id` header, consistent with the rest of the deploy/destroy calls.
  */
 export function patchDeployment(
   deploymentId: string,
   body: DeploymentPatch,
   apiKey: string,
+  projectId: string,
   baseUrl?: string,
 ): Promise<boolean> {
   return apiRequest<boolean>("PATCH", ENDPOINTS.deployment(deploymentId), {
     apiKey,
+    projectId,
     baseUrl,
     body,
   });
@@ -315,12 +317,13 @@ export function postDeploymentResources(
   deploymentId: string,
   body: ResourcesReport,
   apiKey: string,
+  projectId: string,
   baseUrl?: string,
 ): Promise<boolean> {
   return apiRequest<boolean>(
     "POST",
     ENDPOINTS.deploymentResources(deploymentId),
-    { apiKey, baseUrl, body },
+    { apiKey, projectId, baseUrl, body },
   );
 }
 

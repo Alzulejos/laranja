@@ -4,6 +4,7 @@ import {
   FilterLogEventsCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
 import { loadConfig, stackName } from "@alzulejos/laranja-core";
+import { note } from "../diagnostics.js";
 import { getAccountId, listStackLambdas, type DeployedLambda, type LambdaKind } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 import * as ui from "../ui.js";
@@ -26,6 +27,7 @@ export interface LogsOptions {
 export async function logs(projectDir: string, opts: LogsOptions = {}): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
+  note({ project: config.name, stage: config.stage, region });
   applyAwsEnv({ region, profile: config.profile });
 
   const stack = stackName(config.name, config.stage);

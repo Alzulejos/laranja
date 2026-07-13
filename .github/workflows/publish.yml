@@ -2,11 +2,10 @@ name: ci
 
 on:
   push:
-    branches: [main, prod]
+    branches: [main, prod, feat/*, fix/*, chore/*]
 
 permissions:
   contents: read
-  packages: write
 
 jobs:
   verify:
@@ -31,14 +30,22 @@ jobs:
     needs: verify
     if: github.ref == 'refs/heads/prod'
     runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write # OIDC: lets npm verify this workflow's identity (trusted publishing) — no token
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          registry-url: https://npm.pkg.github.com
+          registry-url: https://registry.npmjs.org
           scope: "@alzulejos"
+
+      # Trusted publishing requires npm >= 11.5.1; node 22 ships an older npm.
+      - name: Upgrade npm
+        run: npm install -g npm@latest
 
       - run: npm ci
 
@@ -50,9 +57,7 @@ jobs:
       - name: Rewrite entry points to dist (CI-only)
         run: node scripts/prepare-publish.mjs
 
-      - name: Publish to GitHub Packages
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to npm (OIDC trusted publishing — no token)
         run: |
           set -euo pipefail
           # dependency order: dependents published after their deps

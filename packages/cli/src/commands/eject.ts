@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { loadConfig, resolveApiKey, postEject, ApiRequestError, apiErrorMessage } from "@alzulejos/laranja-core";
 import { scan } from "@alzulejos/laranja-scanner";
 import { writeResourceTypes } from "../resource-types.js";
+import { note } from "../diagnostics.js";
 
 /**
  * Generate a standalone, owned CDK project. The project is synthesized on the
@@ -11,6 +12,7 @@ import { writeResourceTypes } from "../resource-types.js";
  */
 export async function eject(projectDir: string, opts: { force?: boolean; stage?: string }): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
+  note({ project: config.name, stage: config.stage });
   if (!config.projectId) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to eject.');
   }

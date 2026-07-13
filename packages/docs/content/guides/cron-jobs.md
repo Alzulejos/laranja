@@ -15,7 +15,7 @@ Decorate a method with [`@Cron`](../reference/decorators-and-markers.md#cron) an
 give it a [schedule](./schedules.md):
 
 ```ts
-import { Cron, rate, every } from "@laranja/decorators";
+import { Cron, rate, every } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))
@@ -44,7 +44,7 @@ If you don't use classes, register a standalone exported function with
 [`cron()`](../reference/decorators-and-markers.md#cron-marker):
 
 ```ts
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() {
   // …
@@ -58,6 +58,47 @@ The function's name becomes the resource id unless you pass an explicit `id`:
 ```ts
 cron({ schedule: every("hour"), id: "hourly-sync" }, refreshCache);
 ```
+
+## NestJS
+
+In a Nest app, `@Cron` goes on a normal provider — with injected dependencies —
+and you can keep the schedule syntax you already use (a
+[node-cron string or `CronExpression`](./schedules.md#node-cron-expressions-nestjsschedule-compatibility)).
+Swapping the import from `@nestjs/schedule` is usually the only change:
+
+```ts
+// tasks.service.ts
+import { Injectable } from "@nestjs/common";
+import { Cron, CronExpression } from "@alzulejos/laranja-decorators";  // ← was @nestjs/schedule
+
+@Injectable()
+export class TasksService {
+  constructor(private readonly reports: ReportsService) {}   // real DI
+
+  @Cron(CronExpression.EVERY_30_MINUTES)
+  async sweep() {
+    await this.reports.rebuild();   // `this.reports` is injected
+  }
+}
+```
+
+Because the method runs on a real provider, laranja resolves it through your
+app's dependency-injection container instead of `new`-ing the class. Point it at
+your module **once** with the [`workers()`](../reference/decorators-and-markers.md#workers)
+marker:
+
+```ts
+// src/main.ts (or a dedicated file)
+import { workers } from "@alzulejos/laranja-decorators";
+import { AppModule } from "./app.module";
+
+export default workers(AppModule);   // build a DI context from this module
+```
+
+Pass `AppModule` for the whole graph, or a leaner module you compose if you want
+a smaller cold start. Like the Nest [HTTP path](./http-apps.md#nestjs), laranja
+packages your **compiled** `dist/` output — run `nest build` before deploying so
+the DI metadata exists.
 
 ## Schedules
 

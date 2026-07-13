@@ -12,7 +12,8 @@ import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@alzulejos/laranja-assembly";
 import { writeResourceTypes } from "./resource-types.js";
-import { step } from "./diagnostics.js";
+import { resolveNestCompiledEntry } from "./nest-build.js";
+import { step, note } from "./diagnostics.js";
 
 export interface Assembly {
   ir: InfraIR;
@@ -27,6 +28,8 @@ export interface Assembly {
 /** A deploy assembly also carries the dashboard deployment id to echo back. */
 export interface RemoteAssembly extends Assembly {
   deploymentId: string;
+  /** The validated dashboard project id (sent as `x-project-id` on lifecycle calls). */
+  projectId: string;
 }
 
 interface BuildEnv {
@@ -52,14 +55,30 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
 
   const config = await loadConfig(projectDir, { stage: env.stage });
   if (!config.projectId) {
-    throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to use the laranja server.');
+    throw new Error("This project isn't linked to laranja — run `laranja init` to connect it.");
   }
   step("scan project");
   const ir = scan({ projectDir, config });
+  // Attach the resolved stage now, before bundling can throw — so a pre-synth
+  // failure report (e.g. an esbuild resolve error) still carries the stage.
+  note({ stage: ir.app.stage });
   writeResourceTypes(projectDir, ir);
   step("bundle handlers");
-  const entries = generateEntries(ir, { projectDir, entryDir });
-  const handlers = await bundleEntries(entries, { entryDir, buildDir });
+  // Nest: point every shim at the user's COMPILED output (DI metadata intact), not
+  // their .ts source — the HTTP bootstrap, the workers(AppModule) module, and each
+  // class-based provider. Express bundles straight from source (all undefined).
+  const isNest = ir.app.framework === "nest";
+  const httpEntry = isNest && ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
+  // Nest worker shims resolve both the provider file and each workers(...) module to
+  // their compiled paths through this — so multiple DI roots need no extra plumbing.
+  const resolveCompiled = isNest ? (file: string) => resolveNestCompiledEntry(projectDir, file) : undefined;
+  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, resolveCompiled });
+  const handlers = await bundleEntries(entries, {
+    entryDir,
+    buildDir,
+    framework: ir.app.framework,
+    projectDir,
+  });
   const assets = computeAssetHashes(handlers);
 
   return { projectId: config.projectId, ir, handlers, assets, cdkOutDir, region: env.region ?? config.region };
@@ -88,6 +107,9 @@ export async function buildRemoteAssembly(
     if (err instanceof ApiRequestError) throw new Error(apiErrorMessage("Synth failed", err));
     throw err;
   }
+  // The deployment row now exists — attach its id so any later failure (assemble,
+  // toolkit diff/deploy) reports against it.
+  note({ deploymentId: res.deploymentId });
   if (res.artifact !== "cloudformation") {
     throw new Error("Server returned a CDK project; expected a CloudFormation template to deploy.");
   }
@@ -102,7 +124,7 @@ export async function buildRemoteAssembly(
     account: env.account,
   });
 
-  return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId };
+  return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId, projectId };
 }
 
 /**

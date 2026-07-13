@@ -39,7 +39,7 @@ When a value should come from your shell or CI instead of your repo, wrap the
 variable name with the `env()` helper where you read it:
 
 ```ts
-import { env } from "@laranja/decorators";
+import { env } from "@alzulejos/laranja-decorators";
 
 const dbUrl = env("DATABASE_URL"); // same as process.env.DATABASE_URL at runtime
 ```

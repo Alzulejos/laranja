@@ -12,7 +12,7 @@ Express app plus a few functions or decorators; laranja reads the code, figures
 out the infrastructure, and ships it.
 
 ```bash
-npm install -D @laranja/cli
+npm install -D @alzulejos/laranja
 npx laranja deploy
 ```
 

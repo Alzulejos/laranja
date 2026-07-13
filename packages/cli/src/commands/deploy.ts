@@ -11,7 +11,7 @@ import {
   resolveDeclaredEnv,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
-import { getAccountId, isBootstrapped } from "../aws.js";
+import { getAccountId, getStackSnapshot, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
@@ -24,11 +24,6 @@ export async function deploy(
   opts: { verbose?: boolean; stage?: string; strict?: boolean } = {},
 ): Promise<void> {
   const started = Date.now();
-  step("load config");
-  const config = await loadConfig(projectDir, { stage: opts.stage });
-  const region = requireRegion(config.region);
-  note({ project: config.name, stage: config.stage, region });
-  applyAwsEnv({ region, profile: config.profile });
 
   // Synth always happens on the laranja server; we need the API key before
   // touching AWS, so fail fast.
@@ -36,6 +31,14 @@ export async function deploy(
   if (!apiKey) {
     throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to deploy.");
   }
+
+  // loadConfig raises a clear "run `laranja init`" error if this directory isn't
+  // linked yet (empty name/projectId); pipeline enforces projectId before synth.
+  step("load config");
+  const config = await loadConfig(projectDir, { stage: opts.stage });
+  const region = requireRegion(config.region);
+  note({ project: config.name, stage: config.stage, region });
+  applyAwsEnv({ region, profile: config.profile });
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} ${region}`);
 
@@ -48,7 +51,7 @@ export async function deploy(
   // only bundle + fingerprint locally, then deploy with the user's own AWS creds.
   step("server build (scan/bundle/synth)");
   const built = await buildRemoteAssembly(projectDir, { region, account, stage: opts.stage }, apiKey);
-  const { ir, stackName, cdkOutDir, deploymentId } = built;
+  const { ir, stackName, cdkOutDir, deploymentId, projectId } = built;
   note({ deploymentId, stackName });
   const lambdaCount = (ir.http ? 1 : 0) + ir.crons.length + ir.queues.length;
   const routesLabel = ir.http ? `${ir.http.routes.length} routes` : "no http";
@@ -56,7 +59,7 @@ export async function deploy(
 
   // /synth opened the deployment row; report its lifecycle to the dashboard
   // (STARTED before AWS → SUCCESS/FAILED after).
-  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey));
+  await reportSafely("report start", () => patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId));
 
   // Resolve the code-discovered env("...") keys from this machine's process.env.
   // Values are passed to CloudFormation as stack Parameters at deploy time (never
@@ -98,6 +101,10 @@ export async function deploy(
     }
   }
 
+  // Snapshot what's already in the stack BEFORE we deploy, so the resource report
+  // can label each resource CREATED / UPDATED / REMOVED (empty on a first deploy).
+  const priorStack = await getStackSnapshot(region, stackName);
+
   step("deploy to AWS");
   const cx = await toolkit.fromAssemblyDirectory(cdkOutDir);
 
@@ -114,7 +121,7 @@ export async function deploy(
     sp.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     sp.fail("deploy failed");
-    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey));
+    await reportSafely("report failure", () => patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId));
     throw err;
   }
 
@@ -133,10 +140,27 @@ export async function deploy(
   // Report the outcome + deployed inventory to the dashboard (success only POSTs
   // resources, per the lifecycle contract).
   step("report success");
-  const resources = buildDeployedResources({ ir, region, account, outputs: out, missingEnv: missing });
-  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey));
-  await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey));
+  const resources = buildDeployedResources({
+    ir,
+    region,
+    account,
+    outputs: out,
+    missingEnv: missing,
+    priorPhysicalIds: priorStack.physicalIds,
+    priorNodeLambdas: priorStack.nodeLambdas,
+    priorScheduleNames: priorStack.scheduleNames,
+    priorQueueNames: priorStack.queueNames,
+  });
+  await reportSafely("report success", () => patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId));
+  await reportSafely("report resources", () => postDeploymentResources(deploymentId, { resources }, apiKey, projectId));
   ui.step("📊", "reported", `${resources.length} resource(s) → dashboard`);
+
+  // Surface teardowns explicitly — a resource dropped from code is gone from AWS
+  // after this deploy, so the user should see it, not just infer it from the graph.
+  const removed = resources.filter((r) => r.action === "REMOVED");
+  if (removed.length) {
+    ui.step("🗑️", "removed", removed.map((r) => `${r.name} (${r.type})`).join(", "));
+  }
 
   if (missing.length) {
     console.log();

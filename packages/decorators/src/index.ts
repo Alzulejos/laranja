@@ -8,10 +8,41 @@
  */
 
 // Re-export the schedule builders + types so users import them alongside @Cron.
-export { rate, every } from "@alzulejos/laranja-core";
+// `CronExpression` is the `@nestjs/schedule` enum, mirrored so a Nest user can
+// repoint their import at laranja and keep their existing @Cron(CronExpression.X).
+export { rate, every, CronExpression } from "@alzulejos/laranja-core";
 export type { RateUnit, Schedule, ScheduleInput } from "@alzulejos/laranja-core";
 
+// Re-export the config-authoring types so `laranja.config.ts` can be typed from
+// the one package users already install — keeping the public surface to exactly
+// two packages (@alzulejos/laranja + @alzulejos/laranja-decorators). `@alzulejos/laranja-core` stays an
+// internal CLI dependency; users never import it directly. The generated
+// `laranja.types.ts` still layers `TypedLaranjaConfig` on top for per-kind typing.
+export type {
+  LaranjaConfig,
+  ComputeConfig,
+  ResourceConfig,
+} from "@alzulejos/laranja-core";
+
+// The queue PRODUCER (`getQueue(name).send(...)`) — the counterpart to the
+// @Queue / queue() consumers below. Unlike the markers this one does real work at
+// runtime (an SQS SendMessage), but it lives here so users have a single import
+// surface for everything queue-related.
+export { getQueue } from "./producer.js";
+export type { LaranjaQueue, SendOptions } from "./producer.js";
+
 import type { ScheduleInput } from "@alzulejos/laranja-core";
+
+/** Options object `@nestjs/schedule`'s `@Cron` accepts as its SECOND argument. */
+export interface NestCronOptions {
+  /** Stable name for the job — laranja uses it as the resource id. */
+  name?: string;
+  /** IANA timezone the schedule is evaluated in. */
+  timeZone?: string;
+  /** Present for signature compatibility; ignored by laranja's static scan. */
+  utcOffset?: number | string;
+  disabled?: boolean;
+}
 
 export interface CronOptions {
   /** A `rate(...)`/`every(...)` builder result, or a raw provider string. */
@@ -68,11 +99,43 @@ function registerFunction(kind: HandlerKind, handler: JobHandler, options: CronO
  */
 export function Cron(schedule: ScheduleInput): MethodDecorator;
 export function Cron(options: CronOptions): MethodDecorator;
-export function Cron(arg: ScheduleInput | CronOptions): MethodDecorator {
+/** `@nestjs/schedule`-compatible form: a cron string/expression + optional options. */
+export function Cron(expression: string, options?: NestCronOptions): MethodDecorator;
+export function Cron(arg: ScheduleInput | CronOptions, _nestOptions?: NestCronOptions): MethodDecorator {
+  // The second (Nest) argument is read statically by the scanner (name -> id,
+  // timeZone -> timezone); at runtime this decorator is a near-no-op registry write.
   const options = toCronOptions(arg);
   return (target, propertyKey) => {
     register("cron", target, propertyKey, options);
   };
+}
+
+/**
+ * `@nestjs/schedule`-compatible `@Interval`. Runs a method every N milliseconds;
+ * laranja lowers it to an EventBridge `rate(...)`, so the interval must be a whole
+ * number of minutes (EventBridge's floor). Discovered statically by the scanner.
+ *
+ * @example
+ *   @Interval(300000)          // every 5 minutes
+ *   @Interval("poll", 300000)  // named
+ */
+export function Interval(milliseconds: number): MethodDecorator;
+export function Interval(name: string, milliseconds: number): MethodDecorator;
+export function Interval(_a: string | number, _b?: number): MethodDecorator {
+  return (target, propertyKey) => {
+    register("cron", target, propertyKey, { schedule: "" });
+  };
+}
+
+/**
+ * `@nestjs/schedule`-compatible `@Timeout`. Present so swapped imports compile,
+ * but a one-shot timer relative to process start has no serverless equivalent —
+ * the scanner rejects it at build time with a clear message.
+ */
+export function Timeout(milliseconds: number): MethodDecorator;
+export function Timeout(name: string, milliseconds: number): MethodDecorator;
+export function Timeout(_a: string | number, _b?: number): MethodDecorator {
+  return () => {};
 }
 
 /** Normalize the `Cron`/`cron` first argument (raw string, Schedule, or full options) into CronOptions. */
@@ -135,6 +198,25 @@ export function queue(options: QueueOptions, handler: JobHandler): void {
  */
 export function http<T>(app: T): T {
   return app;
+}
+
+/**
+ * Declare the Nest module laranja resolves background workers (@Cron / @Queue)
+ * against — code-first, the DI counterpart to `http()`. Export the result so the
+ * scanner (and the generated worker shims) can find it:
+ *
+ *   export default workers(AppModule);        // or
+ *   export const jobs = workers(AppModule);
+ *
+ * At runtime laranja builds a standalone Nest context from this module
+ * (`NestFactory.createApplicationContext`) so each worker Lambda resolves its
+ * provider — and that provider's injected dependencies — through real DI instead
+ * of a bare `new`. Pass `AppModule` for the whole graph, or a leaner module you
+ * compose if you want a smaller cold start. Identity at runtime: returns the
+ * module untouched; only Nest projects with crons/queues need it.
+ */
+export function workers<T>(module: T): T {
+  return module;
 }
 
 /**

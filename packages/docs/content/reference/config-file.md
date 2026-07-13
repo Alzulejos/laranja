@@ -11,7 +11,7 @@ config object. It's a TypeScript module (loaded via `tsx`), so you get full type
 checking and can compute values if you need to.
 
 ```ts
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@alzulejos/laranja-decorators";
 
 const config: LaranjaConfig = {
   name: "my-api",

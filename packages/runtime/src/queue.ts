@@ -14,6 +14,27 @@ function parseBody(body: string): unknown {
 }
 
 /**
+ * Drive an SQS batch through a consumer, one message at a time, collecting the
+ * IDs that threw into the partial-batch-failure response. Shared by the plain and
+ * the Nest/DI-backed consumer handlers so the retry contract lives in one place.
+ */
+export async function runSqsBatch(
+  consumer: QueueConsumer,
+  event: SQSEvent,
+  context: Context,
+): Promise<SQSBatchResponse> {
+  const batchItemFailures: { itemIdentifier: string }[] = [];
+  for (const record of event.Records) {
+    try {
+      await consumer(parseBody(record.body), record, context);
+    } catch {
+      batchItemFailures.push({ itemIdentifier: record.messageId });
+    }
+  }
+  return { batchItemFailures };
+}
+
+/**
  * Builds the Lambda handler for a `@Queue` method or `queue()` function. Calls the
  * consumer once per message with the JSON-parsed body. Failed messages are
  * reported back via the partial-batch-failure contract, so the CDK event source
@@ -46,16 +67,5 @@ export function createQueueHandler<T extends object>(
     return (fn as QueueConsumer).bind(instance);
   };
 
-  return async (event, context) => {
-    const consumer = resolveConsumer();
-    const batchItemFailures: { itemIdentifier: string }[] = [];
-    for (const record of event.Records) {
-      try {
-        await consumer(parseBody(record.body), record, context);
-      } catch {
-        batchItemFailures.push({ itemIdentifier: record.messageId });
-      }
-    }
-    return { batchItemFailures };
-  };
+  return async (event, context) => runSqsBatch(resolveConsumer(), event, context);
 }

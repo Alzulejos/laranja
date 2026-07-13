@@ -1,5 +1,5 @@
 import path from "node:path";
-import type { HandlerRef, InfraIR } from "@alzulejos/laranja-core";
+import type { CronIR, HandlerRef, InfraIR, QueueIR, WorkersIR } from "@alzulejos/laranja-core";
 
 /**
  * A generated Lambda entry file. These tiny shims are what the bundler points at:
@@ -10,7 +10,8 @@ import type { HandlerRef, InfraIR } from "@alzulejos/laranja-core";
 export interface GeneratedEntry {
   /** Logical id of the resulting Lambda (matches the IR id). */
   id: string;
-  kind: "http" | "cron" | "queue";
+  /** "worker" = a consolidated Nest module Lambda hosting several crons/queues. */
+  kind: "http" | "cron" | "queue" | "worker";
   /** File name to write under the entry dir. */
   fileName: string;
   /** Exported handler symbol (always "handler" for now). */
@@ -23,6 +24,19 @@ export interface GenerateEntriesOptions {
   projectDir: string;
   /** Absolute path to the dir the entry files will be written to. */
   entryDir: string;
+  /**
+   * Absolute path the HTTP shim should import instead of `<projectDir>/<http.handlerEntry>`.
+   * Used for Nest: the shim imports the user's COMPILED bootstrap (e.g.
+   * `dist/main.js`, which carries the DI metadata their build emitted) rather than
+   * the `.ts` source. Ignored for the worker shims.
+   */
+  httpEntry?: string;
+  /**
+   * Map a source file to its COMPILED path. Nest class-based workers must import the
+   * compiled provider AND their compiled `workers(...)` module (DI metadata intact),
+   * not the `.ts` source. Absent for Express, where shims bundle straight from source.
+   */
+  resolveCompiled?: (file: string) => string;
 }
 
 /** Build an import specifier from `fromDir` to a source file, posix-style, no extension. */
@@ -36,6 +50,72 @@ function importSpecifier(fromDir: string, toFile: string): string {
 /** Make an id safe to use as a file name. */
 function safe(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, "_");
+}
+
+/** An `import` line binding a (possibly-default, possibly-aliased) export to a local name. */
+function importBinding(local: string, exportName: string, spec: string): string {
+  if (exportName === "default") return `import ${local} from "${spec}";`;
+  if (exportName === local) return `import { ${local} } from "${spec}";`;
+  return `import { ${exportName} as ${local} } from "${spec}";`;
+}
+
+/**
+ * The consolidated Nest worker shim: ONE Lambda for a whole `workers()` module.
+ * Imports the compiled module once + each hosted provider once, then wires a
+ * `createNestWorkerDispatcher` with two routing tables — crons keyed by id (the
+ * EventBridge input), queues keyed by name (the SQS source). `NestFactory` is
+ * imported from the user's own `@nestjs/core`, keeping the runtime package
+ * framework-agnostic.
+ */
+function workerDispatcherShim(
+  worker: WorkersIR,
+  crons: CronIR[],
+  queues: QueueIR[],
+  opts: GenerateEntriesOptions,
+): string {
+  if (!opts.resolveCompiled) {
+    throw new Error(
+      `Cannot generate the worker shim for "${worker.id}": missing the compiled module. ` +
+        `Add \`export default workers(${worker.id})\` and build first.`,
+    );
+  }
+  const resolve = opts.resolveCompiled;
+  const workersSpec = importSpecifier(opts.entryDir, resolve(worker.handlerEntry));
+  const workersImport = importBinding("workersModule", worker.appExport, workersSpec);
+
+  // Import each provider class once, even if it hosts several methods.
+  const providerImports = new Map<string, string>();
+  const cronRows: string[] = [];
+  const queueRows: string[] = [];
+  for (const c of crons) {
+    if (c.style !== "method") continue;
+    providerImports.set(c.className, importSpecifier(opts.entryDir, resolve(c.file)));
+    cronRows.push(`      "${c.id}": [${c.className}, "${c.method}"],`);
+  }
+  for (const q of queues) {
+    if (q.style !== "method") continue;
+    providerImports.set(q.className, importSpecifier(opts.entryDir, resolve(q.file)));
+    queueRows.push(`      "${q.name}": [${q.className}, "${q.method}"],`);
+  }
+  const imports = [...providerImports].map(([cls, spec]) => `import { ${cls} } from "${spec}";`).join("\n");
+
+  return `import { NestFactory } from "@nestjs/core";
+${workersImport}
+${imports}
+import { createNestWorkerDispatcher } from "@alzulejos/laranja-runtime";
+
+export const handler = createNestWorkerDispatcher(
+  () => NestFactory.createApplicationContext(workersModule),
+  {
+    crons: {
+${cronRows.join("\n")}
+    },
+    queues: {
+${queueRows.join("\n")}
+    },
+  },
+);
+`;
 }
 
 /**
@@ -58,32 +138,55 @@ function handlerWiring(ref: HandlerRef, spec: string): { importLine: string; fac
 /** Generate all Lambda entry shims for an Infra IR. */
 export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): GeneratedEntry[] {
   const entries: GeneratedEntry[] = [];
+  const isNest = ir.app.framework === "nest";
+  const workers = ir.workers ?? [];
+  // A method-style Nest handler is GROUPED into its module's one worker Lambda.
+  const isGrouped = (h: HandlerRef & { workersId?: string }): boolean =>
+    isNest && h.style === "method" && h.workersId !== undefined;
 
   // HTTP proxy: one Lambda wrapping the whole app. Absent for workers-only apps.
+  // Express exports a ready app instance (createHttpHandler(app)); Nest exports an
+  // async bootstrap factory that returns the app (createNestHttpHandler(bootstrap)),
+  // and its shim imports the COMPILED bootstrap via `opts.httpEntry`.
   if (ir.http) {
-    const httpTarget = path.join(opts.projectDir, ir.http.handlerEntry);
+    const local = isNest ? "bootstrap" : "app";
+    const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
+    const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
     const httpSpec = importSpecifier(opts.entryDir, httpTarget);
-    const appImport =
-      ir.http.appExport === "default"
-        ? `import app from "${httpSpec}";`
-        : ir.http.appExport === "app"
-          ? `import { app } from "${httpSpec}";`
-          : `import { ${ir.http.appExport} as app } from "${httpSpec}";`;
+    const appImport = importBinding(local, ir.http.appExport, httpSpec);
     entries.push({
       id: "http",
       kind: "http",
       fileName: "http.ts",
       handlerExport: "handler",
       contents: `${appImport}
-import { createHttpHandler } from "@alzulejos/laranja-runtime";
+import { ${factory} } from "@alzulejos/laranja-runtime";
 
-export const handler = createHttpHandler(app);
+export const handler = ${factory}(${local});
 `,
     });
   }
 
-  // Cron: one Lambda per @Cron method / cron() function.
+  // Worker Lambdas: one per `workers()` module, hosting all its grouped (method-
+  // style) crons + queues behind a single dispatcher. This is where bundle
+  // duplication disappears — the module's DI graph is bundled once, not per handler.
+  for (const w of workers) {
+    const crons = ir.crons.filter((c) => c.workersId === w.id && c.style === "method");
+    const queues = ir.queues.filter((q) => q.workersId === w.id && q.style === "method");
+    if (crons.length === 0 && queues.length === 0) continue;
+    entries.push({
+      id: w.id,
+      kind: "worker",
+      fileName: `worker-${safe(w.id)}.ts`,
+      handlerExport: "handler",
+      contents: workerDispatcherShim(w, crons, queues, opts),
+    });
+  }
+
+  // Cron: one Lambda per STANDALONE @Cron / cron() (Express classes, or function-
+  // style). Grouped Nest crons are hosted by their worker Lambda above.
   for (const cron of ir.crons) {
+    if (isGrouped(cron)) continue;
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
     const { importLine, factoryArgs } = handlerWiring(cron, spec);
     entries.push({
@@ -99,8 +202,10 @@ export const handler = createScheduledHandler(${factoryArgs});
     });
   }
 
-  // Queue: one consumer Lambda per @Queue method / queue() function.
+  // Queue: one consumer Lambda per STANDALONE @Queue / queue(). Grouped Nest
+  // queues are hosted by their worker Lambda above.
   for (const queue of ir.queues) {
+    if (isGrouped(queue)) continue;
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
     const { importLine, factoryArgs } = handlerWiring(queue, spec);
     entries.push({

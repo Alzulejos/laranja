@@ -4,6 +4,9 @@ import { Project, Node } from "ts-morph";
 import type { ClassDeclaration, MethodDeclaration, SourceFile } from "ts-morph";
 import {
   assertSchedule,
+  ENV_NAME_PATTERN,
+  intervalToSchedule,
+  isValidEnvName,
   type ComputeConfig,
   type CronIR,
   type Framework,
@@ -13,9 +16,11 @@ import {
   type LaranjaConfig,
   type QueueIR,
   type ResourceConfig,
+  type WorkersIR,
 } from "@alzulejos/laranja-core";
-import { getPropertyInitializer, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
+import { getPropertyInitializer, literalValue, readDecoratorArg, resolveScheduleNode } from "./ast-utils.js";
 import { detectFramework } from "./detect.js";
+import { collectNestRoutes } from "./nest-routes.js";
 
 export interface ScanInput {
   projectDir: string;
@@ -61,14 +66,24 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const crons: CronIR[] = [];
   const queues: QueueIR[] = [];
   const routes: HttpRoute[] = [];
-  const httpMarkers: HttpMarker[] = [];
+  const httpMarkers: CallMarker[] = [];
+  const workerMarkers: CallMarker[] = [];
   const envKeys = new Set<string>();
+  // Project-wide index of class name -> declarations, used to walk a workers()
+  // module's DI provider graph when disambiguating multiple roots.
+  const classIndex = new Map<string, ClassDeclaration[]>();
 
   for (const sf of project.getSourceFiles()) {
     const rel = path.relative(projectDir, sf.getFilePath());
     if (rel.includes("node_modules")) continue;
 
     for (const cls of sf.getClasses()) {
+      const clsName = cls.getName();
+      if (clsName) {
+        const list = classIndex.get(clsName) ?? [];
+        list.push(cls);
+        classIndex.set(clsName, list);
+      }
       for (const method of cls.getMethods()) {
         collectFromMethod(rel, cls, method, crons, queues);
       }
@@ -79,12 +94,15 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
       collectFromRegistrations(rel, sf, regImports, crons, queues);
     }
 
-    collectEnvKeys(sf, envKeys);
+    collectEnvKeys(rel, sf, envKeys);
 
     if (framework === "express") {
       collectExpressRoutes(rel, sf, routes);
+    } else if (framework === "nest") {
+      collectNestRoutes(rel, sf, routes);
     }
-    collectHttpMarkers(rel, sf, httpMarkers);
+    collectCallMarkers(rel, sf, "http", httpMarkers);
+    collectCallMarkers(rel, sf, "workers", workerMarkers);
   }
 
   // The HTTP app is declared solely by the code `http()` marker. One marker → an
@@ -109,34 +127,74 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
     );
   }
 
+  // Each workers() marker names a Nest module we build a standalone DI context from,
+  // so class-based (@Cron/@Queue on a provider) workers resolve through real DI
+  // instead of `new`. A project may declare several disjoint roots; every method-style
+  // handler is bound to exactly one via `workersId`.
+  const workers = assignWorkerRoots(workerMarkers, crons, queues, classIndex);
+
+  // Nest resolves method-style workers through DI, which needs a module. (Plain
+  // function-style cron()/queue() handlers don't — they're standalone functions.)
+  if (framework === "nest" && !workers) {
+    const needsDi = [...crons, ...queues].find((h) => h.style === "method");
+    if (needsDi) {
+      throw new Error(
+        `${needsDi.source}: a Nest @Cron/@Queue on a class needs its dependency-injection graph. ` +
+          `Export it once with workers(AppModule), e.g. \`export default workers(AppModule)\`.`,
+      );
+    }
+  }
+
   // Validate `resources` keys against the resources we actually found, then merge
   // global `compute` defaults with each per-resource override and attach the
   // result to the IR. An unknown key is a typo — fail loudly rather than no-op.
   // Resource keys: http -> "http", cron -> its id, queue -> its NAME (what the
   // user wrote in @Queue/queue() — the natural handle, and what a DLQ references).
   // They share one namespace, so reject collisions before anything references them.
-  assertUniqueResourceKeys(http, crons, queues);
-  validateResourceKeys(config, http, crons, queues);
+  assertUniqueResourceKeys(http, crons, queues, workers);
+  validateResourceKeys(config, http, crons, queues, workers);
   const queueNames = new Set(queues.map((q) => q.name));
   if (http) {
     http.compute = resolveCompute(config, "http");
     rejectForeignKeys("http", "http app", config.resources?.["http"], COMPUTE_KEYS);
   }
+  // A worker module is ONE Lambda: compute lives on the module key, shared by every
+  // handler it hosts (see WorkersIR). Resolve it once per module.
+  for (const w of workers ?? []) {
+    w.compute = resolveCompute(config, w.id);
+    rejectForeignKeys(w.id, "worker module", config.resources?.[w.id], COMPUTE_KEYS);
+  }
+  const computeById = new Map((workers ?? []).map((w) => [w.id, w.compute]));
   for (const c of crons) {
-    c.compute = resolveCompute(config, c.id);
-    applyCronConfig(c, config.resources?.[c.id], queueNames);
+    // Grouped (method-style, in a worker module): its function's compute is the
+    // module's — never per-cron. Standalone crons keep their own compute.
+    if (c.workersId) {
+      applyCronConfig(c, config.resources?.[c.id], queueNames, true);
+    } else {
+      c.compute = resolveCompute(config, c.id);
+      applyCronConfig(c, config.resources?.[c.id], queueNames, false);
+    }
   }
   for (const q of queues) {
-    q.compute = resolveCompute(config, q.name);
-    applyQueueConfig(q, config.resources?.[q.name], queueNames);
+    // Effective consumer timeout for the visibility-timeout floor: the worker
+    // function's timeout when grouped, else this queue's own.
+    const workerTimeout = q.workersId ? computeById.get(q.workersId)?.timeout : undefined;
+    if (q.workersId) {
+      applyQueueConfig(q, config.resources?.[q.name], queueNames, true, workerTimeout);
+    } else {
+      q.compute = resolveCompute(config, q.name);
+      applyQueueConfig(q, config.resources?.[q.name], queueNames, false, q.compute?.timeout);
+    }
   }
 
   const stage = config.stage ?? "dev";
   const provider = config.provider ?? "aws";
+  const monitoring = config.monitoring ?? true;
 
   return {
-    app: { name: config.name, framework, provider, stage, entry: http?.handlerEntry },
+    app: { name: config.name, framework, provider, stage, monitoring, entry: http?.handlerEntry },
     http,
+    workers,
     crons,
     queues,
     // STAGE is always available at runtime, overridable via explicit env.
@@ -179,12 +237,14 @@ function validateResourceKeys(
   http: HttpIR | undefined,
   crons: CronIR[],
   queues: QueueIR[],
+  workers: WorkersIR[] | undefined,
 ): void {
   if (!config.resources) return;
   const validIds = new Set<string>([
     ...(http ? ["http"] : []),
     ...crons.map((c) => c.id),
     ...queues.map((q) => q.name),
+    ...(workers ?? []).map((w) => w.id),
   ]);
   for (const key of Object.keys(config.resources)) {
     if (!validIds.has(key)) {
@@ -203,7 +263,12 @@ function validateResourceKeys(
  * make a key ambiguous, so reject it early with a clear message rather than let
  * CloudFormation fail on a duplicate physical name later.
  */
-function assertUniqueResourceKeys(http: HttpIR | undefined, crons: CronIR[], queues: QueueIR[]): void {
+function assertUniqueResourceKeys(
+  http: HttpIR | undefined,
+  crons: CronIR[],
+  queues: QueueIR[],
+  workers: WorkersIR[] | undefined,
+): void {
   const seen = new Map<string, string>();
   const claim = (key: string, what: string): void => {
     const prev = seen.get(key);
@@ -215,6 +280,7 @@ function assertUniqueResourceKeys(http: HttpIR | undefined, crons: CronIR[], que
   if (http) claim("http", "the HTTP app");
   for (const c of crons) claim(c.id, `cron "${c.id}"`);
   for (const q of queues) claim(q.name, `queue "${q.name}"`);
+  for (const w of workers ?? []) claim(w.id, `worker module "${w.id}"`);
 }
 
 /** Default consumer timeout (seconds); mirrors the back-half so validation matches. */
@@ -246,10 +312,35 @@ function rejectForeignKeys(
   }
 }
 
+/**
+ * Reject compute knobs on a GROUPED handler's key — its Lambda is the worker
+ * module, so compute belongs on `resources[<module>]`. A clear migration error
+ * beats a silently-ignored `memory` on a queue that no longer owns a function.
+ */
+function rejectComputeOnGrouped(id: string, workersId: string, override: ResourceConfig): void {
+  const stray = Object.keys(override).find((k) => COMPUTE_KEYS.has(k));
+  if (stray) {
+    throw new Error(
+      `laranja.config.ts: resources["${id}"].${stray} is a per-worker setting now — ` +
+        `${id} shares the "${workersId}" Lambda. Move ${stray} to resources["${workersId}"].`,
+    );
+  }
+}
+
 /** Apply a cron's per-resource override (timezone, async retry, DLQ) onto its IR. */
-function applyCronConfig(c: CronIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+function applyCronConfig(
+  c: CronIR,
+  override: ResourceConfig | undefined,
+  queueNames: Set<string>,
+  grouped: boolean,
+): void {
   if (!override) return;
-  rejectForeignKeys(c.id, "cron", override, COMPUTE_KEYS, CRON_KEYS);
+  if (grouped && c.workersId) {
+    rejectComputeOnGrouped(c.id, c.workersId, override); // compute → migration error
+    rejectForeignKeys(c.id, "cron", override, CRON_KEYS); // then only trigger knobs allowed
+  } else {
+    rejectForeignKeys(c.id, "cron", override, COMPUTE_KEYS, CRON_KEYS);
+  }
   if (override.timezone !== undefined) c.timezone = override.timezone;
   if (override.retryAttempts !== undefined) {
     if (override.retryAttempts < 0 || override.retryAttempts > 2) {
@@ -264,10 +355,25 @@ function applyCronConfig(c: CronIR, override: ResourceConfig | undefined, queueN
   }
 }
 
-/** Apply a queue's per-resource override (SQS + event-source knobs, DLQ) onto its IR. */
-function applyQueueConfig(q: QueueIR, override: ResourceConfig | undefined, queueNames: Set<string>): void {
+/**
+ * Apply a queue's per-resource override (SQS + event-source knobs, DLQ) onto its IR.
+ * `consumerTimeout` is the effective consumer‑function timeout — the worker
+ * module's when grouped, else this queue's own — used as the visibility floor.
+ */
+function applyQueueConfig(
+  q: QueueIR,
+  override: ResourceConfig | undefined,
+  queueNames: Set<string>,
+  grouped: boolean,
+  consumerTimeout: number | undefined,
+): void {
   if (!override) return;
-  rejectForeignKeys(q.name, "queue", override, COMPUTE_KEYS, QUEUE_KEYS);
+  if (grouped && q.workersId) {
+    rejectComputeOnGrouped(q.name, q.workersId, override); // compute → migration error
+    rejectForeignKeys(q.name, "queue", override, QUEUE_KEYS); // then only trigger knobs allowed
+  } else {
+    rejectForeignKeys(q.name, "queue", override, COMPUTE_KEYS, QUEUE_KEYS);
+  }
   if (override.contentBasedDedup !== undefined) {
     if (!q.fifo) {
       throw new Error(`laranja.config.ts: resources["${q.name}"].contentBasedDedup is FIFO-only.`);
@@ -278,7 +384,7 @@ function applyQueueConfig(q: QueueIR, override: ResourceConfig | undefined, queu
   if (override.reportBatchItemFailures !== undefined) q.reportBatchItemFailures = override.reportBatchItemFailures;
   if (override.messageRetention !== undefined) q.messageRetention = override.messageRetention;
   if (override.visibilityTimeout !== undefined) {
-    const timeout = q.compute?.timeout ?? DEFAULT_CONSUMER_TIMEOUT;
+    const timeout = consumerTimeout ?? DEFAULT_CONSUMER_TIMEOUT;
     if (override.visibilityTimeout < timeout) {
       throw new Error(
         `laranja.config.ts: resources["${q.name}"].visibilityTimeout (${override.visibilityTimeout}s) ` +
@@ -336,23 +442,36 @@ function collectFromMethod(
 
     if (name === "Cron") {
       const where = loc(rel, dec);
-      const argNode = dec.getArguments()[0];
+      const args = dec.getArguments();
+      const argNode = args[0];
 
-      // @Cron(<schedule>) or @Cron({ schedule, id })
+      // One decorator name, two call shapes:
+      //   laranja:        @Cron(<schedule>)            @Cron({ schedule, id })
+      //   @nestjs/schedule: @Cron(<expr>, { name, timeZone })  (expr = string | CronExpression)
       let scheduleNode: Node | undefined = argNode;
       let explicitId: string | undefined;
+      let timezone: string | undefined;
       if (argNode && Node.isObjectLiteralExpression(argNode)) {
         scheduleNode = getPropertyInitializer(argNode, "schedule");
         const idInit = getPropertyInitializer(argNode, "id");
-        const idVal = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
-        explicitId = idVal;
+        explicitId = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
+      } else {
+        // Nest's options object is the SECOND argument: name -> id, timeZone -> timezone.
+        const optNode = args[1];
+        if (optNode && Node.isObjectLiteralExpression(optNode)) {
+          const nameInit = getPropertyInitializer(optNode, "name");
+          if (nameInit && Node.isStringLiteral(nameInit)) explicitId = nameInit.getLiteralText();
+          const tzInit = getPropertyInitializer(optNode, "timeZone");
+          if (tzInit && Node.isStringLiteral(tzInit)) timezone = tzInit.getLiteralText();
+        }
       }
 
-      const schedule = resolveScheduleNode(scheduleNode);
+      const schedule = resolveScheduleNode(scheduleNode, where);
       if (!schedule) {
         throw new Error(
           `@Cron at ${where}: could not resolve a valid static schedule. ` +
-            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
+            `Use rate(n, unit), every(unit), a "rate(...)"/"cron(...)" string, ` +
+            `a node-cron expression, or CronExpression.* with literal arguments.`,
         );
       }
       assertSchedule(schedule, where);
@@ -361,11 +480,40 @@ function collectFromMethod(
         style: "method",
         id: explicitId ?? `${className}-${methodName}`,
         schedule,
+        ...(timezone ? { timezone } : {}),
         file: rel,
         className,
         method: methodName,
         source: loc(rel, method),
       });
+    }
+
+    if (name === "Interval") {
+      const where = loc(rel, dec);
+      const args = dec.getArguments();
+      // @Interval(ms) or @Interval("name", ms) — Nest's signature.
+      const hasName = args.length >= 2;
+      const explicitId = hasName && Node.isStringLiteral(args[0]) ? args[0].getLiteralText() : undefined;
+      const ms = literalValue(hasName ? args[1] : args[0]);
+      if (typeof ms !== "number") {
+        throw new Error(`@Interval at ${where}: the interval must be a numeric millisecond literal.`);
+      }
+      crons.push({
+        style: "method",
+        id: explicitId ?? `${className}-${methodName}`,
+        schedule: intervalToSchedule(ms, where),
+        file: rel,
+        className,
+        method: methodName,
+        source: loc(rel, method),
+      });
+    }
+
+    if (name === "Timeout") {
+      throw new Error(
+        `@Timeout at ${loc(rel, dec)}: one-shot @Timeout jobs have no serverless equivalent ` +
+          `(they fire once relative to a process start that doesn't exist on Lambda). Use @Cron or @Interval.`,
+      );
     }
 
     if (name === "Queue") {
@@ -471,11 +619,12 @@ function collectFromRegistrations(
         const idInit = getPropertyInitializer(optNode, "id");
         explicitId = idInit && Node.isStringLiteral(idInit) ? idInit.getLiteralText() : undefined;
       }
-      const schedule = resolveScheduleNode(scheduleNode);
+      const schedule = resolveScheduleNode(scheduleNode, where);
       if (!schedule) {
         throw new Error(
           `cron() at ${where}: could not resolve a valid static schedule. ` +
-            `Use rate(n, unit), every(unit), or a raw "rate(...)"/"cron(...)" string with literal arguments.`,
+            `Use rate(n, unit), every(unit), a "rate(...)"/"cron(...)" string, ` +
+            `a node-cron expression, or CronExpression.* with literal arguments.`,
         );
       }
       assertSchedule(schedule, where);
@@ -504,31 +653,34 @@ function collectFromRegistrations(
   });
 }
 
-/** A discovered `http(app)` marker: the file it lives in and the export it's bound to. */
-interface HttpMarker {
+/** A discovered call-marker (`http(app)` / `workers(AppModule)`): its file + bound export. */
+interface CallMarker {
   file: string;
   appExport: string;
   source: string;
+  /** The marker's first argument if it's a bare identifier (the module class for `workers`). */
+  argName?: string;
 }
 
-/** Local identifiers in this file bound to laranja's `http` marker (alias-aware). */
-function httpMarkerNames(sf: SourceFile): Set<string> {
+/** Local identifiers in this file bound to a given laranja marker (alias-aware). */
+function markerNames(sf: SourceFile, marker: string): Set<string> {
   const names = new Set<string>();
   for (const imp of sf.getImportDeclarations()) {
     if (!REGISTRATION_MODULES.has(imp.getModuleSpecifierValue())) continue;
     for (const named of imp.getNamedImports()) {
-      if (named.getName() === "http") names.add(named.getAliasNode()?.getText() ?? "http");
+      if (named.getName() === marker) names.add(named.getAliasNode()?.getText() ?? marker);
     }
   }
   return names;
 }
 
 /**
- * Discover `http(app)` markers. The marker must be bound to an export so the shim
- * can import it — either `export default http(app)` or `export const x = http(app)`.
+ * Discover a call-marker (`http(app)` / `workers(AppModule)`). The marker must be
+ * bound to an export so the shim can import it — either `export default m(x)` or
+ * `export const y = m(x)`.
  */
-function collectHttpMarkers(rel: string, sf: SourceFile, markers: HttpMarker[]): void {
-  const names = httpMarkerNames(sf);
+function collectCallMarkers(rel: string, sf: SourceFile, marker: string, markers: CallMarker[]): void {
+  const names = markerNames(sf, marker);
   if (names.size === 0) return;
 
   sf.forEachDescendant((node) => {
@@ -538,23 +690,174 @@ function collectHttpMarkers(rel: string, sf: SourceFile, markers: HttpMarker[]):
 
     const where = loc(rel, node);
     const parent = node.getParent();
+    const firstArg = node.getArguments()[0];
+    const argName = firstArg && Node.isIdentifier(firstArg) ? firstArg.getText() : undefined;
 
     if (parent && Node.isExportAssignment(parent)) {
-      markers.push({ file: rel, appExport: "default", source: where });
+      markers.push({ file: rel, appExport: "default", source: where, argName });
       return;
     }
     if (parent && Node.isVariableDeclaration(parent)) {
       if (!parent.getVariableStatement()?.isExported()) {
-        throw new Error(`http() at ${where}: the app must be exported, e.g. \`export const app = http(app)\`.`);
+        throw new Error(`${marker}() at ${where}: the value must be exported, e.g. \`export const x = ${marker}(...)\`.`);
       }
-      markers.push({ file: rel, appExport: parent.getName(), source: where });
+      markers.push({ file: rel, appExport: parent.getName(), source: where, argName });
       return;
     }
     throw new Error(
-      `http() at ${where}: wrap and export the app, e.g. \`export default http(app)\` ` +
-        `or \`export const app = http(app)\`.`,
+      `${marker}() at ${where}: wrap and export it, e.g. \`export default ${marker}(...)\` ` +
+        `or \`export const x = ${marker}(...)\`.`,
     );
   });
+}
+
+/**
+ * Bind each method-style @Cron/@Queue to its DI root and return the roots.
+ *
+ * - No marker: undefined (Express, or a workers-free / function-only project).
+ * - One marker: the common case — every method-style handler resolves against it,
+ *   no provider-graph walk needed (a bare `class AppModule {}` with no @Module
+ *   graph still works, as it always has).
+ * - Several markers: disambiguate by DI membership. Resolve each root's provider
+ *   class graph (its `providers`, transitively through `imports`) and bind each
+ *   handler to the single root that owns its class — so each worker Lambda later
+ *   boots only its own module. A handler in zero or several roots, or a root that
+ *   owns no worker, is a hard error.
+ */
+function assignWorkerRoots(
+  markers: CallMarker[],
+  crons: CronIR[],
+  queues: QueueIR[],
+  classIndex: Map<string, ClassDeclaration[]>,
+): WorkersIR[] | undefined {
+  if (markers.length === 0) return undefined;
+
+  if (markers.length === 1) {
+    const m = markers[0]!;
+    const id = m.argName ?? "workers";
+    for (const h of [...crons, ...queues]) {
+      if (h.style === "method") h.workersId = id;
+    }
+    return [{ id, handlerEntry: m.file, appExport: m.appExport }];
+  }
+
+  // Multiple roots: each marker must wrap a named module we can resolve a graph for.
+  const roots = markers.map((m) => {
+    if (!m.argName) {
+      throw new Error(
+        `workers() at ${m.source}: with multiple worker modules each must wrap a named module class, ` +
+          `e.g. \`export default workers(QueueModule)\`.`,
+      );
+    }
+    return { marker: m, id: m.argName, providers: providerClassNames(m.argName, classIndex, new Set()) };
+  });
+
+  const byId = new Map<string, (typeof roots)[number]>();
+  for (const r of roots) {
+    const prev = byId.get(r.id);
+    if (prev) {
+      throw new Error(
+        `workers(${r.id}) is declared twice (${prev.marker.source}, ${r.marker.source}). Mark each module once.`,
+      );
+    }
+    byId.set(r.id, r);
+  }
+
+  const owned = new Map<string, number>(roots.map((r) => [r.id, 0]));
+  for (const h of [...crons, ...queues]) {
+    if (h.style !== "method") continue;
+    const label = `${h.className}.${h.method}`;
+    const owning = roots.filter((r) => r.providers.has(h.className));
+    if (owning.length === 0) {
+      throw new Error(
+        `${h.source}: ${label} isn't a provider in any workers() module. ` +
+          `Add ${h.className} to the providers of one of: ${roots.map((r) => r.id).join(", ")}.`,
+      );
+    }
+    if (owning.length > 1) {
+      throw new Error(
+        `${h.source}: ${label} resolves to multiple workers() modules (${owning.map((r) => r.id).join(", ")}). ` +
+          `A provider must belong to a single DI root — remove it from all but one.`,
+      );
+    }
+    const root = owning[0]!;
+    h.workersId = root.id;
+    owned.set(root.id, (owned.get(root.id) ?? 0) + 1);
+  }
+
+  for (const r of roots) {
+    if ((owned.get(r.id) ?? 0) === 0) {
+      throw new Error(
+        `workers(${r.id}) at ${r.marker.source} owns no @Cron/@Queue provider. ` +
+          `A workers module must contain at least one worker — remove the marker or move a job into ${r.id}.`,
+      );
+    }
+  }
+
+  return roots.map((r) => ({ id: r.id, handlerEntry: r.marker.file, appExport: r.marker.appExport }));
+}
+
+/**
+ * The class names of the providers a Nest module owns, transitively through its
+ * `imports`. Modules we can't resolve in-project (e.g. `ConfigModule` from
+ * node_modules) contribute nothing — we only care about the user's own worker
+ * providers. Best-effort by design: it reads `providers`/`imports` statically and
+ * skips dynamic shapes it can't fold, which is safe (an unresolved provider simply
+ * won't match a handler, surfacing as a clear "not in any workers() module" error).
+ */
+function providerClassNames(
+  moduleName: string,
+  classIndex: Map<string, ClassDeclaration[]>,
+  seen: Set<string>,
+): Set<string> {
+  const out = new Set<string>();
+  if (seen.has(moduleName)) return out;
+  seen.add(moduleName);
+
+  const decl = classIndex.get(moduleName)?.[0];
+  const moduleDec = decl?.getDecorators().find((d) => d.getName() === "Module");
+  const arg = moduleDec?.getArguments()[0];
+  if (!arg || !Node.isObjectLiteralExpression(arg)) return out;
+
+  const providers = getPropertyInitializer(arg, "providers");
+  if (providers && Node.isArrayLiteralExpression(providers)) {
+    for (const el of providers.getElements()) {
+      const name = providerClassName(el);
+      if (name) out.add(name);
+    }
+  }
+
+  const imports = getPropertyInitializer(arg, "imports");
+  if (imports && Node.isArrayLiteralExpression(imports)) {
+    for (const el of imports.getElements()) {
+      const imported = importedModuleName(el);
+      if (imported) for (const p of providerClassNames(imported, classIndex, seen)) out.add(p);
+    }
+  }
+  return out;
+}
+
+/** The class a `providers[]` element names: `Svc` or `{ provide, useClass: Svc }`. */
+function providerClassName(el: Node): string | undefined {
+  if (Node.isIdentifier(el)) return el.getText();
+  if (Node.isObjectLiteralExpression(el)) {
+    const useClass = getPropertyInitializer(el, "useClass");
+    if (useClass && Node.isIdentifier(useClass)) return useClass.getText();
+  }
+  return undefined;
+}
+
+/** The module an `imports[]` element names: `Mod` or a dynamic `Mod.forRoot(...)`. */
+function importedModuleName(el: Node): string | undefined {
+  if (Node.isIdentifier(el)) return el.getText();
+  if (Node.isCallExpression(el)) {
+    const callee = el.getExpression();
+    if (Node.isPropertyAccessExpression(callee)) {
+      const obj = callee.getExpression();
+      if (Node.isIdentifier(obj)) return obj.getText();
+    }
+  }
+  return undefined;
 }
 
 /** Best-effort discovery of `app.get("/path", ...)` style routes for visibility. */
@@ -594,7 +897,7 @@ function envHelperNames(sf: SourceFile): Set<string> {
  * auditable). Location is irrelevant: a call buried in a handler body counts the
  * same as one at module scope, because this is pure source analysis.
  */
-function collectEnvKeys(sf: SourceFile, keys: Set<string>): void {
+function collectEnvKeys(rel: string, sf: SourceFile, keys: Set<string>): void {
   const names = envHelperNames(sf);
   if (names.size === 0) return;
 
@@ -604,7 +907,19 @@ function collectEnvKeys(sf: SourceFile, keys: Set<string>): void {
     if (!Node.isIdentifier(callee) || !names.has(callee.getText())) return;
     const arg = node.getArguments()[0];
     if (arg && (Node.isStringLiteral(arg) || Node.isNoSubstitutionTemplateLiteral(arg))) {
-      keys.add(arg.getLiteralText());
+      const key = arg.getLiteralText();
+      // A malformed name (a stray char that slipped inside the quotes, e.g.
+      // `env("MY_SECRET)")`) can never be a real env var — fail loudly here with a
+      // location, rather than downstream as a cryptic duplicate-construct error at
+      // synth once non-alphanumerics are stripped from the CFN Parameter id.
+      if (!isValidEnvName(key)) {
+        throw new Error(
+          `Invalid env var name ${JSON.stringify(key)} in ${rel}:${arg.getStartLineNumber()} — ` +
+            `env var names must match ${ENV_NAME_PATTERN.source} (letters, digits, underscores; ` +
+            `not starting with a digit). Check for a typo like a bracket inside the quotes.`,
+        );
+      }
+      keys.add(key);
     }
   });
 }

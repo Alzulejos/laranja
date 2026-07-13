@@ -107,6 +107,32 @@ export interface HttpIR {
   compute?: ComputeConfig;
 }
 
+/**
+ * A `workers(SomeModule)` marker — and, post‑consolidation, the ONE worker Lambda
+ * for that module. All of a module's method‑style `@Cron`/`@Queue` handlers run in
+ * this single function: it boots a standalone DI context
+ * (`NestFactory.createApplicationContext(module)`) once, and its generated shim
+ * routes each invocation (EventBridge → cron by id, SQS → queue by ARN) to the
+ * right provider method. Absent for Express (no DI) and workers‑free projects.
+ *
+ * A project may declare several — one per disjoint DI root (e.g. a queues module
+ * and a crons module) — so each worker Lambda boots only the graph it needs and
+ * pays a smaller cold start. Each method‑style cron/queue names its module via
+ * `workersId`; that is the function it belongs to.
+ */
+export interface WorkersIR {
+  /** Stable id — the module's class name; what handlers point `workersId` at, and
+   *  the asset/function key for this worker Lambda. */
+  id: string;
+  /** Project-relative module that exports `workers(SomeModule)`. */
+  handlerEntry: string;
+  /** Named export within that module (e.g. "default" or "jobs"). */
+  appExport: string;
+  /** Compute for this shared worker function — resolved from `resources[<module>]`
+   *  merged over the global `compute` default. Shared by every hosted handler. */
+  compute?: ComputeConfig;
+}
+
 /** @Cron(...) / cron(...) -> scheduled trigger -> its own Lambda. */
 export type CronIR = HandlerRef & {
   /** Stable logical id, used for the CDK construct + function name. */
@@ -123,6 +149,8 @@ export type CronIR = HandlerRef & {
   dlq?: { queue: string };
   /** Resolved compute config for this cron's function. */
   compute?: ComputeConfig;
+  /** Method-style Nest crons only: id of the WorkersIR DI root that owns this provider. */
+  workersId?: string;
 };
 
 /** @Queue({ name }) / queue(...) -> SQS queue -> its own consumer Lambda. */
@@ -146,6 +174,8 @@ export type QueueIR = HandlerRef & {
   dlq?: { maxReceiveCount: number; queue: string };
   /** Resolved compute config for this queue's consumer function. */
   compute?: ComputeConfig;
+  /** Method-style Nest queues only: id of the WorkersIR DI root that owns this provider. */
+  workersId?: string;
 };
 
 export interface InfraIR {
@@ -156,11 +186,23 @@ export interface InfraIR {
     provider: CloudProvider;
     /** Deployment stage; part of resource names. */
     stage: string;
+    /**
+     * Emit a per-app-stage monitoring dashboard. Provider-neutral; the back half
+     * maps it to its own primitives (CloudWatch dashboard on AWS). Defaults to true.
+     */
+    monitoring: boolean;
     /** Project-relative app entry (same as http.handlerEntry). Absent for workers-only apps. */
     entry?: string;
   };
   /** Absent when there's no `http()` marker — a workers-only deployment. */
   http?: HttpIR;
+  /**
+   * Nest DI roots for class-based workers; absent for Express / function-only apps.
+   * One entry per `workers()` marker — a project can run disjoint DI graphs so each
+   * worker Lambda boots only its own module (smaller cold starts). Method-style
+   * crons/queues bind to a root via `workersId`.
+   */
+  workers?: WorkersIR[];
   crons: CronIR[];
   queues: QueueIR[];
   /**

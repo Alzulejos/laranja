@@ -97,7 +97,17 @@ export async function sendFailureReport(report: FailureReport): Promise<boolean>
   }
   if (!projectId) return false;
   try {
-    await postReport(report as unknown as Record<string, unknown>, apiKey, projectId);
+    // The dashboard's /report reads exactly { deploymentId, message, stage }. The
+    // richer report (step, stack, timing) stays in the local errors.jsonl only.
+    await postReport(
+      {
+        deploymentId: report.fields.deploymentId ?? null,
+        message: report.reason,
+        stage: report.fields.stage ?? null,
+      },
+      apiKey,
+      projectId,
+    );
     return true;
   } catch {
     return false;

@@ -1,7 +1,8 @@
 {
   "name": "@alzulejos/laranja-docs",
-  "version": "0.0.8",
+  "version": "0.2.4",
   "description": "Canonical laranja documentation, parsed and exported as a module for any frontend to render.",
+  "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.js",
   "module": "./dist/index.js",
@@ -18,7 +19,7 @@
     "content"
   ],
   "publishConfig": {
-    "registry": "https://npm.pkg.github.com"
+    "access": "public"
   },
   "scripts": {
     "build": "node scripts/build.mjs"

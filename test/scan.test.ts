@@ -478,6 +478,19 @@ describe("env() discovery", () => {
     expect(ir.envKeys).toEqual(["STRIPE_KEY"]);
   });
 
+  test("rejects a malformed env name (e.g. a bracket that slipped inside the quotes)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate, env } from "@alzulejos/laranja-decorators";
+        export async function job() {
+          return env("MY_SECRET)"); // typo: ')' inside the string
+        }
+        cron(rate(1, "hour"), job);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false }) })).toThrow(/Invalid env var name "MY_SECRET\)"/);
+  });
+
   test("ignores an env() that isn't laranja's helper", () => {
     const dir = makeProject({
       "src/jobs.ts": `
@@ -491,5 +504,359 @@ describe("env() discovery", () => {
     });
     const ir = scan({ projectDir: dir, config: cfg({ http: false }) });
     expect(ir.envKeys).toEqual([]);
+  });
+});
+
+describe("nest framework", () => {
+  test("detects the http() marker and discovers routes from Nest controllers", () => {
+    const dir = makeProject({
+      "src/main.ts": `
+        import { http } from "@alzulejos/laranja-decorators";
+        export async function bootstrap() { return {} as any; }
+        export default http(bootstrap);
+      `,
+      "src/app.controller.ts": `
+        import { Controller, Get } from "@nestjs/common";
+        @Controller()
+        export class AppController {
+          @Get() getHello() { return "hi"; }
+        }
+      `,
+      "src/users.controller.ts": `
+        import { Controller, Get, Post } from "@nestjs/common";
+        @Controller("users")
+        export class UsersController {
+          @Get() findAll() {}
+          @Get(":id") findOne() {}
+          @Post() create() {}
+        }
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+
+    expect(ir.app.framework).toBe("nest");
+    expect(ir.http).toBeDefined();
+    expect(ir.http).toMatchObject({ handlerEntry: "src/main.ts", appExport: "default" });
+
+    const routes = ir.http!.routes.map((r) => `${r.method} ${r.path}`).sort();
+    expect(routes).toEqual(["GET /", "GET /users", "GET /users/:id", "POST /users"].sort());
+  });
+
+  test("does not treat a plain Express app.get() as a Nest route", () => {
+    const dir = makeProject({
+      "src/main.ts": `
+        import { http } from "@alzulejos/laranja-decorators";
+        export async function bootstrap() { return {} as any; }
+        export default http(bootstrap);
+      `,
+      // No @Controller here — an express-style call must be ignored under nest.
+      "src/other.ts": `
+        const app: any = {};
+        app.get("/legacy", () => {});
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+    expect(ir.http!.routes).toEqual([]);
+  });
+});
+
+describe("Nest-style @Cron / @Interval (swap-the-import compatibility)", () => {
+  test("translates a bare node-cron string to an AWS cron schedule", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron("0 12 * * *")
+          async noon() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "cron", expression: "0 12 * * ? *", dialect: "aws" });
+  });
+
+  test("folds CronExpression.* members", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron, CronExpression } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron(CronExpression.EVERY_5_MINUTES)
+          async tick() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "cron", expression: "*/5 * * * ? *", dialect: "aws" });
+  });
+
+  test("reads Nest's second-arg options (name -> id, timeZone -> timezone)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron("0 3 * * *", { name: "nightly", timeZone: "Europe/Lisbon" })
+          async run() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0]).toMatchObject({ id: "nightly", timezone: "Europe/Lisbon" });
+  });
+
+  test("@Interval(ms) becomes a rate schedule", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Interval } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Interval(300000)
+          async poll() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) });
+    expect(ir.crons[0].schedule).toEqual({ kind: "rate", value: 5, unit: "minute" });
+  });
+
+  test("rejects sub-minute schedules loudly", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron, CronExpression } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron(CronExpression.EVERY_30_SECONDS)
+          async tooOften() {}
+        }
+      `,
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) })).toThrow(/sub-minute/);
+  });
+
+  test("rejects @Timeout with a clear message", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Timeout } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Timeout(5000)
+          async once() {}
+        }
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ http: false, framework: "nest" }) })).toThrow(/no serverless equivalent/);
+  });
+});
+
+describe("multi-root workers (per-module DI graphs)", () => {
+  // A two-root project: a queues module and a crons module, each with its own
+  // provider, so each worker Lambda boots only its own DI graph.
+  const twoRoots = () => ({
+    "src/queue/email.consumer.ts": `
+      import { Queue } from "@alzulejos/laranja-decorators";
+      export class EmailConsumer {
+        @Queue({ name: "emails" })
+        async handle() {}
+      }
+    `,
+    "src/queue/queue.module.ts": `
+      import { Module } from "@nestjs/common";
+      import { workers } from "@alzulejos/laranja-decorators";
+      import { EmailConsumer } from "./email.consumer";
+      @Module({ providers: [EmailConsumer] })
+      class QueueModule {}
+      export default workers(QueueModule);
+    `,
+    "src/cron/sweep.service.ts": `
+      import { Cron, rate } from "@alzulejos/laranja-decorators";
+      export class SweepService {
+        @Cron(rate(5, "minutes"))
+        async sweep() {}
+      }
+    `,
+    "src/cron/cron.module.ts": `
+      import { Module } from "@nestjs/common";
+      import { workers } from "@alzulejos/laranja-decorators";
+      import { SweepService } from "./sweep.service";
+      @Module({ providers: [SweepService] })
+      class CronModule {}
+      export default workers(CronModule);
+    `,
+  });
+
+  test("binds each handler to the module that owns its provider", () => {
+    const ir = scan({ projectDir: makeProject(twoRoots()), config: cfg({ framework: "nest" }) });
+
+    expect(ir.workers).toHaveLength(2);
+    expect(ir.workers?.map((w) => w.id).sort()).toEqual(["CronModule", "QueueModule"]);
+    expect(ir.queues[0]).toMatchObject({ className: "EmailConsumer", workersId: "QueueModule" });
+    expect(ir.crons[0]).toMatchObject({ className: "SweepService", workersId: "CronModule" });
+  });
+
+  test("resolves providers transitively through a module's imports", () => {
+    const dir = makeProject({
+      "src/mail/email.consumer.ts": `
+        import { Queue } from "@alzulejos/laranja-decorators";
+        export class EmailConsumer {
+          @Queue({ name: "emails" })
+          async handle() {}
+        }
+      `,
+      "src/mail/mail.module.ts": `
+        import { Module } from "@nestjs/common";
+        import { EmailConsumer } from "./email.consumer";
+        @Module({ providers: [EmailConsumer] })
+        export class MailModule {}
+      `,
+      "src/queue/queue.module.ts": `
+        import { Module } from "@nestjs/common";
+        import { workers } from "@alzulejos/laranja-decorators";
+        import { MailModule } from "../mail/mail.module";
+        @Module({ imports: [MailModule] })
+        class QueueModule {}
+        export default workers(QueueModule);
+      `,
+      "src/cron/sweep.service.ts": `
+        import { Cron, rate } from "@alzulejos/laranja-decorators";
+        export class SweepService {
+          @Cron(rate(5, "minutes"))
+          async sweep() {}
+        }
+      `,
+      "src/cron/cron.module.ts": `
+        import { Module } from "@nestjs/common";
+        import { workers } from "@alzulejos/laranja-decorators";
+        import { SweepService } from "./sweep.service";
+        @Module({ providers: [SweepService] })
+        class CronModule {}
+        export default workers(CronModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+    expect(ir.queues[0]).toMatchObject({ className: "EmailConsumer", workersId: "QueueModule" });
+  });
+
+  test("errors when a handler's provider is in no workers module", () => {
+    const files = twoRoots();
+    // Orphan the consumer: drop it from QueueModule's providers.
+    files["src/queue/queue.module.ts"] = files["src/queue/queue.module.ts"].replace(
+      "providers: [EmailConsumer]",
+      "providers: []",
+    );
+    expect(() => scan({ projectDir: makeProject(files), config: cfg({ framework: "nest" }) })).toThrow(
+      /EmailConsumer\.handle isn't a provider in any workers\(\) module/,
+    );
+  });
+
+  test("errors when a workers module owns no @Cron/@Queue provider", () => {
+    const files = twoRoots();
+    // CronModule now provides a plain service with no worker decorators.
+    files["src/cron/sweep.service.ts"] = `export class SweepService { async sweep() {} }`;
+    expect(() => scan({ projectDir: makeProject(files), config: cfg({ framework: "nest" }) })).toThrow(
+      /workers\(CronModule\).*owns no @Cron\/@Queue provider/,
+    );
+  });
+
+  test("errors when a provider belongs to two workers modules", () => {
+    const files = twoRoots();
+    // Put EmailConsumer in CronModule too — ambiguous DI root.
+    files["src/cron/cron.module.ts"] = files["src/cron/cron.module.ts"]
+      .replace(
+        'import { SweepService } from "./sweep.service";',
+        'import { SweepService } from "./sweep.service";\n      import { EmailConsumer } from "../queue/email.consumer";',
+      )
+      .replace("providers: [SweepService]", "providers: [SweepService, EmailConsumer]");
+    expect(() => scan({ projectDir: makeProject(files), config: cfg({ framework: "nest" }) })).toThrow(
+      /EmailConsumer\.handle resolves to multiple workers\(\) modules/,
+    );
+  });
+
+  test("a single workers root still binds every handler to it (no graph walk needed)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
+        export class Jobs {
+          @Cron(rate(5, "minutes"))
+          async sweep() {}
+          @Queue({ name: "emails" })
+          async handle() {}
+        }
+      `,
+      // A bare module with no @Module graph — the common simple case must keep working.
+      "src/app.module.ts": `
+        import { workers } from "@alzulejos/laranja-decorators";
+        class AppModule {}
+        export default workers(AppModule);
+      `,
+    });
+    const ir = scan({ projectDir: dir, config: cfg({ framework: "nest" }) });
+    expect(ir.workers).toEqual([{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }]);
+    expect(ir.crons[0].workersId).toBe("AppModule");
+    expect(ir.queues[0].workersId).toBe("AppModule");
+  });
+});
+
+describe("worker consolidation config (compute on the module, triggers on the handler)", () => {
+  // One module hosting a cron + a queue on the same provider — the common single-
+  // Lambda-per-module case.
+  const oneModule = () => ({
+    "src/jobs.ts": `
+      import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
+      export class Jobs {
+        @Cron(rate(5, "minutes")) async sweep() {}
+        @Queue({ name: "emails", batchSize: 5 }) async send() {}
+      }
+    `,
+    "src/app.module.ts": `
+      import { Module } from "@nestjs/common";
+      import { workers } from "@alzulejos/laranja-decorators";
+      import { Jobs } from "./jobs";
+      @Module({ providers: [Jobs] })
+      class AppModule {}
+      export default workers(AppModule);
+    `,
+  });
+
+  test("compute set on the module key lands on the worker, not the handlers", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { AppModule: { memory: 512, timeout: 45 } } as never });
+    const ir = scan({ projectDir: makeProject(oneModule()), config: cfgWith });
+    expect(ir.workers?.[0]).toMatchObject({ id: "AppModule", compute: { memory: 512, timeout: 45 } });
+    // Grouped handlers carry no compute of their own — it's the module's.
+    expect(ir.crons[0].compute).toBeUndefined();
+    expect(ir.queues[0].compute).toBeUndefined();
+  });
+
+  test("trigger knobs on a grouped queue key still apply", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { emails: { visibilityTimeout: 120 } } as never });
+    const ir = scan({ projectDir: makeProject(oneModule()), config: cfgWith });
+    expect(ir.queues[0].visibilityTimeout).toBe(120);
+  });
+
+  test("a compute knob on a grouped handler key errors and points at the module", () => {
+    const cfgWith = cfg({ framework: "nest", resources: { emails: { memory: 256 } } as never });
+    expect(() => scan({ projectDir: makeProject(oneModule()), config: cfgWith })).toThrow(
+      /resources\["emails"\]\.memory is a per-worker setting now.*resources\["AppModule"\]/,
+    );
   });
 });

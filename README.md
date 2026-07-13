@@ -1,14 +1,6 @@
 # 🍊 laranja
 
-**Code-first deploys for Node.js.** Write your Express app and decorate your background jobs — laranja scans your code, figures out the infrastructure, and deploys it to **your own AWS account**. No YAML, no console clicking, no CDK to learn.
-
-```ts
-@Cron(rate(5, "minutes"))
-async refreshCache() { /* ... */ }
-
-@Queue({ name: "emails", batchSize: 10 })
-async sendEmails(body: EmailJob) { /* ... */ }
-```
+**Code-first deploys for Node.js.** Write your Express or NestJS app and decorate your background jobs — laranja reads your code, figures out the infrastructure, and deploys it to **your own AWS account**. No YAML, no console clicking, no CDK to learn.
 
 ```bash
 $ laranja deploy
@@ -25,252 +17,140 @@ $ laranja deploy
   ✨ live
 ```
 
-> **Status:** early MVP. Express is supported today; NestJS is on the roadmap. APIs may change.
-
----
+> **Status:** early MVP. **Express and NestJS** are supported today. APIs may change.
 
 ## Why laranja?
 
-- **Code is the source of truth.** Your decorators *are* the infra spec — no drift between app and config.
-- **Safe by default.** laranja reads your code to discover infra — it never runs it.
-- **Your account, your data.** Deploys go straight into your AWS account using your own credentials. laranja hosts nothing.
-- **No CDK/CLI to install.** The AWS CDK toolkit is embedded — you don't install or learn it.
-- **Eject anytime.** Outgrow the magic? Generate a fully-owned CDK project you control.
-
-## What gets deployed
-
-| You write | laranja creates |
-|---|---|
-| An Express `app` | One **Lambda** behind a **Function URL** (HTTPS), serving all routes |
-| `@Cron(...)` method | A **Lambda** + an **EventBridge** schedule rule |
-| `@Queue({...})` method | An **SQS queue** + a consumer **Lambda** (with partial-batch failure reporting) |
-
-All bundled with esbuild, scaled to zero, pay-per-use. No API Gateway, no servers.
-
----
+- **Your code is the source of truth.** Routes and decorators _are_ the infra spec — no drift between app and config.
+- **Your account, your data.** Deploys go straight into your AWS account with your own local credentials. laranja hosts none of your infrastructure.
+- **Your source stays local.** laranja _reads_ your code to discover infra — it never runs it, and only a description of your infra ever crosses the wire.
+- **Nothing to learn.** The AWS CDK toolkit is embedded; there's no CDK or CLI to install. Outgrow the magic? `laranja eject` hands you a fully-owned CDK project.
 
 ## Install
 
 ```bash
-npm install @laranja/decorators        # used in your app code
-npm install -D @laranja/cli            # the `laranja` command
+npm install @alzulejos/laranja-decorators     # used in your app code
+npm install -D @alzulejos/laranja             # the `laranja` command
 ```
 
-You'll also need:
+You'll also need **Node.js 20+**, **AWS credentials** on the standard chain (`aws configure`, SSO, or `AWS_*` env vars), and a **laranja API key** from the [dashboard](https://laranja.io) — `laranja init` wires it up.
 
-- **Node.js 20+**
-- **AWS credentials** on the standard chain (`aws configure`, SSO, or `AWS_*` env vars) — the AWS CLI itself is *not* required.
+## Express
 
-## Quick start
-
-**1. Your app** — export the Express app (`src/app.ts`):
+Mark your app with `http()` and decorate any background jobs. That's the whole surface.
 
 ```ts
+// src/app.ts
 import express from "express";
+import { http } from "@alzulejos/laranja-decorators";
 
-export const app = express();
-app.use(express.json());
-
-app.get("/", (_req, res) => res.json({ ok: true, stage: process.env.STAGE }));
+const app = express();
+app.get("/", (_req, res) => res.json({ ok: true }));
 app.get("/users/:id", (req, res) => res.json({ id: req.params.id }));
+
+export default http(app); // ← the marker laranja looks for
 ```
 
-**2. Your jobs** — decorate methods (`src/jobs.ts`):
+```ts
+// src/jobs.ts
+import { cron, rate } from "@alzulejos/laranja-decorators";
+
+export async function refreshCache() {
+  console.log("refreshing…");
+  return true;
+}
+cron({ schedule: rate(5, "minutes") }, refreshCache);
+```
+
+```bash
+laranja init      # link a dashboard project + scaffold laranja.config.ts
+laranja deploy    # → live HTTPS URL + the scheduled job
+```
+
+## NestJS
+
+Same markers — wrap your bootstrap so it `return`s the app, and decorate a queue consumer.
 
 ```ts
-import { Cron, Queue, rate, every } from "@laranja/decorators";
+// src/main.ts
+import { NestFactory } from "@nestjs/core";
+import { AppModule } from "./app.module";
+import { http } from "@alzulejos/laranja-decorators";
 
-export class Jobs {
-  @Cron(rate(5, "minutes"))
-  async refreshCache() {
-    console.log("refreshing…");
-  }
+export async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+  await app.listen(process.env.PORT ?? 3001);
+  return app;
+}
 
-  @Cron(every("day"))
-  async nightlyCleanup() {}
+export default http(bootstrap);
+```
 
-  @Cron({ schedule: "cron(0 12 * * ? *)", id: "daily-report" })
-  async dailyReport() {}
+```ts
+// src/event/event.module.ts
+import { Module } from "@nestjs/common";
+import { QueueService } from "./queue.service";
+import { workers } from "@alzulejos/laranja-decorators";
+import { ConfigModule } from "@nestjs/config";
+import { UserModule } from "src/user/user.module";
+
+@Module({
+  imports: [ConfigModule, UserModule, MailerModule],
+  providers: [QueueService],
+})
+export class EventModule {}
+
+export default workers(EventModule);
+```
+
+```ts
+// src/event/queue.service.ts
+import { Queue } from "@alzulejos/laranja-decorators";
+import { Injectable } from "@nestjs/common";
+
+@Injectable()
+export class QueueService {
+  constructor(private readonly mailer: Mailer) {} // real DI
 
   @Queue({ name: "emails", batchSize: 10 })
-  async sendEmails(body: unknown) {
-    console.log("got message", body);
+  async sendEmails(body: EmailJob) {
+    await this.mailer.send(body);
   }
 }
 ```
 
-**3. Configure** — `laranja.config.ts` (or run `laranja init`):
+Deploys to a Lambda behind a Function URL for HTTP, plus an SQS queue with a consumer Lambda. Produce messages with `getQueue("emails").send(...)`.
 
-```ts
-import type { LaranjaConfig } from "@laranja/core";
+## Documentation
 
-const config: LaranjaConfig = {
-  name: "my-api",
-  region: "eu-central-1",
-  stage: "prod",
-  entry: "src/app.ts",   // module that exports your app
-  appExport: "app",      // the export name
-  env: { LOG_LEVEL: "info" },
-};
+The README is a taste. Everything else — full decorator API, every config field, all CLI flags, env vars, stages, custom domains, and how the client/server split keeps your source local — lives at **[laranja.io/docs](https://laranja.io/docs)**:
 
-export default config;
-```
-
-**4. Deploy:**
-
-```bash
-npx laranja deploy        # first run prompts to bootstrap your account
-```
-
-That's it. You'll get a live HTTPS URL, scheduled jobs, and queues.
-
----
-
-## Environment variables
-
-Put commit-safe config in the `env` map. For values that should come from your
-shell or CI, wrap them with `env()` — laranja finds them and populates every
-function at deploy time, so you never fill them in by hand in the console:
-
-```ts
-import { env } from "@laranja/decorators";
-
-const dbUrl = env("DATABASE_URL"); // process.env.DATABASE_URL at runtime
-```
-
-```bash
-DATABASE_URL=postgres://… laranja deploy --stage prod
-```
-
-The name must be a string literal. Missing a value? laranja deploys and warns
-(use `--strict` to fail instead). See the
-[env vars guide](packages/docs/content/configuration/environment-variables.md) for details.
-
----
-
-## Decorators
-
-### `@Cron` — scheduled jobs
-
-Schedules are **AWS EventBridge** expressions. Use the typed builders, or pass a raw string.
-
-```ts
-@Cron(rate(5, "minutes"))                              // rate(5 minutes)
-@Cron(every("day"))                                    // rate(1 day)
-@Cron({ schedule: "cron(0 12 * * ? *)", id: "report" })// raw cron + a custom name
-```
-
-- `rate(value, unit)` → `"minute(s)" | "hour(s)" | "day(s)"`
-- `every(unit)` → shorthand for `rate(1, unit)`
-- `id` (optional) sets the function name; otherwise the method name is used.
-
-### `@Queue` — SQS consumers
-
-```ts
-@Queue({ name: "emails", batchSize: 10 })
-async sendEmails(body: unknown, record, context) { /* ... */ }
-
-@Queue({ name: "orders.fifo", fifo: true })   // .fifo suffix → FIFO queue
-async processOrders(body: unknown) { /* ... */ }
-```
-
-The consumer is called **once per message** with the JSON-parsed `body`. Throwing marks just that message as failed (the rest of the batch still succeeds), via SQS partial-batch responses.
-
----
-
-## Commands
-
-```bash
-laranja init       # scaffold laranja.config.ts
-laranja synth      # build & print the planned resources (no AWS calls)
-laranja deploy     # deploy into your AWS account
-laranja diff       # diff the plan against what's deployed
-laranja destroy    # tear it all down
-laranja logs       # tail CloudWatch logs for a deployed function
-laranja eject      # generate an owned CDK project (Pro)
-
-# flags
-  --stage, -s <name>  # target a stage (dev/staging/prod); overrides config
-  --verbose, -v       # stream full CDK/CloudFormation output
-  --strict            # deploy: fail if any env() value is unset (default: warn)
-  --all               # logs: tail every function (multiplexed)
-  --no-follow         # logs: print recent history and exit
-  --since <dur>       # logs: history look-back, e.g. 30s, 15m, 1h, 2d
-```
-
-Each command takes an optional `[project-dir]` (defaults to the current directory).
-
-### Stages
-
-`--stage` (alias `-s`) overrides `config.stage` and applies to `deploy`, `synth`,
-`diff`, `destroy`, `logs`, and `eject`. Each stage is its own CloudFormation stack
-named `‹name›-‹stage›`, so one repo drives a pipeline per environment:
-
-```bash
-laranja deploy --stage dev
-laranja deploy --stage staging
-laranja deploy --stage prod
-```
-
-Stages can live in one AWS account (distinct stacks) or in separate accounts
-(your AWS credentials are the boundary) — either way the stacks never collide.
-
-## Configuration
-
-| Field | Required | Default | Description |
-|---|---|---|---|
-| `name` | ✅ | — | App name; used for the stack and resource names |
-| `entry` | ✅ | — | Project-relative module exporting your app |
-| `region` | | `AWS_REGION` | AWS region to deploy to |
-| `stage` | | `"dev"` | Stage; part of the stack + resource names, also injected as `STAGE` env. Override per-run with `--stage` |
-| `appExport` | | `"app"` | Named export of the app within `entry` |
-| `profile` | | — | AWS named profile to deploy with |
-| `env` | | `{}` | Plain env vars injected into every Lambda |
-
-**Resource naming:** the stack is `‹name›-‹stage›` (e.g. `my-api-prod`) and Lambdas are `‹name›-‹fn›-‹stage›` (e.g. `my-api-app-prod`, `my-api-sendEmails-prod`) — deterministic, no random suffixes.
-
----
-
-## How it works
-
-1. **It reads your code — it never runs it.** laranja finds your app, routes,
-   `@Cron`/`@Queue` jobs, and the env vars you wrap with `env()` by reading your
-   source, so planning a deploy is always safe.
-2. **It deploys into your AWS account.** What it found becomes Lambdas, schedules,
-   and queues, deployed with your own credentials. The CDK toolkit is embedded —
-   nothing extra to install.
-
-## Custom domains
-
-laranja exposes your app via a **Lambda Function URL** (stable across deploys). To put your own domain on it, point a **CloudFront** distribution (with an ACM cert) at the Function URL and add a Route 53 record. Automated custom-domain support is on the roadmap.
-
-## Pro: `laranja eject`
-
-Want full control? `laranja eject` writes a standalone, **fully-owned CDK project** into `infra/` — readable constructs, self-bundling, deployable with plain `cdk deploy`. No laranja required afterward.
-
-```bash
-laranja eject
-cd infra && npm install && npm run deploy
-```
-
-## Roadmap
-
-- [x] `laranja logs` — tail CloudWatch with the same clean UI
-- [ ] NestJS support (native `@Controller`/`@Get` discovery + DI)
-- [ ] Automated custom domains (CloudFront + ACM + Route 53)
-- [ ] Hosted dashboard (read-only, via a role you grant)
-- [ ] Secrets & resource decorators (`@Secret`, `@Table`)
+- [Introduction & how it works](packages/docs/content/getting-started/how-it-works.md)
+- [Quickstart](packages/docs/content/getting-started/quickstart.md)
+- [Decorators & markers](packages/docs/content/reference/decorators-and-markers.md)
+- [CLI commands](packages/docs/content/reference/commands.md)
+- [Config file](packages/docs/content/reference/config-file.md)
+- [Guides](packages/docs/content/guides/) — cron, queues, env vars, stages, HTTP apps
 
 ## Local development (monorepo)
 
 ```bash
 npm install
-npm run scan:express      # show what laranja found in the example
-npm run synth:express     # see the planned resources
-npm run deploy:express    # deploy the example (needs AWS creds)
-npm run destroy:express
+npm run build       # tsc -b across all packages + build the docs
+npm run typecheck   # type-check everything
+npm run test        # run the vitest suite
+```
+
+Run the CLI against an example without publishing (uses `tsx`, resolving to source):
+
+```bash
+tsx packages/cli/src/cli.ts plan examples/expressjs
+tsx packages/cli/src/cli.ts plan examples/nestjs
 ```
 
 ## License
 
-TBD — laranja is in early development.
+The laranja client packages in this repository (the CLI, decorators, and supporting
+libraries you install to build and deploy your app) are licensed under the
+[Apache License 2.0](LICENSE). The hosted laranja backend service is proprietary and
+is not part of this repository.

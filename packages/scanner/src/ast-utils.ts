@@ -1,6 +1,14 @@
 import { Node, SyntaxKind } from "ts-morph";
 import type { ObjectLiteralExpression } from "ts-morph";
-import { rate, every, parseScheduleString, type RateUnit, type Schedule } from "@alzulejos/laranja-core";
+import {
+  rate,
+  every,
+  parseScheduleString,
+  nestCronToSchedule,
+  CRON_EXPRESSION_VALUES,
+  type RateUnit,
+  type Schedule,
+} from "@alzulejos/laranja-core";
 
 /** Resolve a literal AST node to a plain JS value, or undefined if not a literal. */
 export function literalValue(node: Node | undefined): string | number | boolean | undefined {
@@ -53,16 +61,42 @@ export function foldScheduleCall(node: Node | undefined): Schedule | undefined {
 }
 
 /**
- * Resolve a node used as a schedule into the neutral structured Schedule. Accepts
- * a raw `rate(...)`/`cron(...)` string literal or a `rate(...)`/`every(...)` helper
- * call. Returns undefined for anything non-static (e.g. a variable) or an
- * unparseable string (e.g. Unix cron), so callers can raise a clear error.
+ * Resolve a `CronExpression.MEMBER` reference to its node-cron string, matching on
+ * the object identifier name (`CronExpression`) and a known member. Alias-agnostic:
+ * whether the enum is imported from laranja or `@nestjs/schedule`, the member names
+ * and values are identical, so we fold through our own mirror.
  */
-export function resolveScheduleNode(node: Node | undefined): Schedule | undefined {
+function resolveCronExpressionMember(node: Node): string | undefined {
+  if (!Node.isPropertyAccessExpression(node)) return undefined;
+  const obj = node.getExpression();
+  if (!Node.isIdentifier(obj) || obj.getText() !== "CronExpression") return undefined;
+  return CRON_EXPRESSION_VALUES[node.getName()];
+}
+
+/**
+ * Resolve a node used as a schedule into the neutral structured Schedule. Accepts,
+ * in order: a `rate(...)`/`every(...)` helper call; a `CronExpression.MEMBER`
+ * reference; a raw AWS `rate(...)`/`cron(...)` string; or a bare node-cron string
+ * (the `@nestjs/schedule` form, translated to the AWS dialect — which THROWS a
+ * located error for anything EventBridge can't honor). Returns undefined only for
+ * non-static input (e.g. a variable), so callers can raise a "not static" error.
+ */
+export function resolveScheduleNode(node: Node | undefined, where: string): Schedule | undefined {
   if (!node) return undefined;
+
+  const folded = foldScheduleCall(node);
+  if (folded) return folded;
+
+  const enumExpr = resolveCronExpressionMember(node);
+  if (enumExpr !== undefined) return nestCronToSchedule(enumExpr, where);
+
   const lit = literalValue(node);
-  if (typeof lit === "string") return parseScheduleString(lit);
-  return foldScheduleCall(node);
+  if (typeof lit === "string") {
+    // A wrapped AWS string (`rate(...)`/`cron(...)`) is the native form; anything
+    // else that's a string is treated as a node-cron expression and translated.
+    return parseScheduleString(lit) ?? nestCronToSchedule(lit, where);
+  }
+  return undefined;
 }
 
 /** Return the initializer node of a named property on an object literal. */

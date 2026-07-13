@@ -15,11 +15,12 @@ job, and a queue consumer.
 mkdir my-api && cd my-api
 npm init -y
 npm install express
-npm install -D @laranja/cli typescript
-npm install @laranja/decorators
+npm install -D @alzulejos/laranja typescript
+npm install @alzulejos/laranja-decorators
 ```
 
-> laranja supports **Express** today. **NestJS support is coming.**
+> laranja supports **Express** and **NestJS**. For Nest, see the
+> [HTTP apps guide](../guides/http-apps.md#nestjs).
 
 ## 2. Write your app
 
@@ -30,7 +31,7 @@ in config:
 ```ts
 // src/app.ts
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 app.get("/", (_req, res) => res.json({ ok: true, stage: process.env.STAGE }));
@@ -44,7 +45,7 @@ whichever fits your codebase.
 
 ```ts tab="Function"
 // src/jobs.ts
-import { cron, queue, rate } from "@laranja/decorators";
+import { cron, queue, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() {
   console.log("refreshing cache…");
@@ -59,7 +60,7 @@ queue({ name: "emails", batchSize: 10 }, sendEmail);
 
 ```ts tab="Class"
 // src/jobs.ts
-import { Cron, Queue, rate } from "@laranja/decorators";
+import { Cron, Queue, rate } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))
@@ -85,7 +86,7 @@ The generated `laranja.config.ts` looks like this (edit `region`, `env`, and
 
 ```ts
 // laranja.config.ts
-import type { LaranjaConfig } from "@laranja/core";
+import type { LaranjaConfig } from "@alzulejos/laranja-decorators";
 
 const config: LaranjaConfig = {
   name: "my-api",

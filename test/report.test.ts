@@ -34,6 +34,8 @@ describe("buildDeployedResources", () => {
       account,
       outputs: { HttpUrl: "https://abc.lambda-url.eu-west-1.on.aws/" },
       missingEnv: [],
+      priorPhysicalIds: new Set(),
+      priorNodeLambdas: [],
     });
 
     expect(res.map((r) => [r.name, r.type])).toEqual([
@@ -49,7 +51,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/jobs.ts", exportName: "cleanup", source: "src/jobs.ts:1", id: "cleanup", schedule: { kind: "rate", value: 1, unit: "day" } },
       ],
     });
-    const res = buildDeployedResources({ ir, region, account, outputs: { HttpUrl: "https://url/" }, missingEnv: [] });
+    const res = buildDeployedResources({ ir, region, account, outputs: { HttpUrl: "https://url/" }, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
 
     const http = res.find((r) => r.type === "http")!;
     const cron = res.find((r) => r.type === "cron")!;
@@ -66,7 +68,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders.fifo", fifo: true, batchSize: 5 },
       ],
     });
-    const [queue] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const [queue] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
     expect(queue.metadata).toEqual({
       queueName: "orders.fifo",
       fifo: true,
@@ -75,11 +77,156 @@ describe("buildDeployedResources", () => {
     });
   });
 
+  it("carries a queue's DLQ as an edge, translating the target's SQS name to its resource id", () => {
+    const ir = makeIr({
+      http: undefined,
+      queues: [
+        // dlq.queue references the target by its SQS *name* ("dead-queue"); nodes are
+        // keyed by id, so metadata must carry the target's id ("dead") for the edge.
+        { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders-queue", dlq: { queue: "dead-queue", maxReceiveCount: 3 } },
+        { style: "function", file: "src/q.ts", exportName: "deadLetters", source: "src/q.ts:2", id: "dead", name: "dead-queue" },
+      ],
+    });
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
+    const orders = res.find((r) => r.name === "orders")!;
+    const dead = res.find((r) => r.name === "dead")!;
+    expect(orders.metadata.dlq).toEqual({ queue: "dead", maxReceiveCount: 3 });
+    // A queue without a DLQ carries no dlq key.
+    expect(dead.metadata.dlq).toBeUndefined();
+  });
+
+  it("stores the structured schedule plus a ready-to-display description on cron metadata", () => {
+    const ir = makeIr({
+      http: undefined,
+      crons: [
+        { style: "function", file: "src/jobs.ts", exportName: "sweep", source: "src/jobs.ts:1", id: "sweep", schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws" } },
+      ],
+    });
+    const [cron] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
+    // The FE reads `description` directly; the structured schedule is kept alongside it.
+    expect(cron.metadata).toEqual({
+      schedule: { kind: "cron", expression: "* * * * ? *", dialect: "aws", description: "Every minute" },
+    });
+  });
+
   it("surfaces missing env keys as per-resource metadata.warnings", () => {
     const ir = makeIr();
-    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: ["STRIPE_KEY", "DB_URL"] });
+    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: ["STRIPE_KEY", "DB_URL"], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
     expect(http.metadata.warnings).toEqual(["STRIPE_KEY", "DB_URL"]);
     expect(http.externalUrl).toBeNull();
+  });
+
+  it("labels resources UPDATED when their pinned physical id already exists, CREATED otherwise", () => {
+    const ir = makeIr({
+      crons: [
+        { style: "function", file: "src/jobs.ts", exportName: "cleanup", source: "src/jobs.ts:1", id: "cleanup", schedule: { kind: "rate", value: 1, unit: "day" } },
+      ],
+    });
+    // http's Lambda (myapp-app-dev) is already in the stack; the cron (myapp-cleanup-dev) is new.
+    const priorPhysicalIds = new Set(["myapp-app-dev"]);
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds, priorNodeLambdas: [] });
+
+    expect(res.find((r) => r.type === "http")!.action).toBe("UPDATED");
+    expect(res.find((r) => r.type === "cron")!.action).toBe("CREATED");
+  });
+
+  it("labels everything CREATED on a first deploy (no prior stack resources)", () => {
+    const ir = makeIr();
+    const [http] = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
+    expect(http.action).toBe("CREATED");
+  });
+
+  it("reports a REMOVED cron via its vanished schedule (its Lambda may still exist)", () => {
+    // Prior stack had http + a "cleanup" cron; the new IR keeps only http. The cron's
+    // schedule is gone from the stack, which is what reveals the removal.
+    const ir = makeIr();
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-app-dev", "myapp-cleanup-dev"]),
+      priorNodeLambdas: [{ logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" }],
+      priorScheduleNames: new Set(["myapp-cleanup-dev"]),
+    });
+
+    const removed = res.filter((r) => r.action === "REMOVED");
+    expect(removed).toHaveLength(1);
+    expect(removed[0]).toMatchObject({
+      name: "cleanup",
+      type: "cron",
+      action: "REMOVED",
+      externalId: "arn:aws:scheduler:eu-west-1:123456789012:schedule/default/myapp-cleanup-dev",
+    });
+    // http still exists this deploy → UPDATED, not REMOVED.
+    expect(res.find((r) => r.type === "http")!.action).toBe("UPDATED");
+  });
+
+  it("reports REMOVED for a grouped Nest cron/queue whose shared worker Lambda survives", () => {
+    // "sweep" cron + "emails" queue still live on the AppModule worker Lambda; the
+    // prior stack also had a grouped "oldjob" cron and "oldqueue" queue, now deleted
+    // from code. The worker Lambda is unchanged, so ONLY the schedule/queue diff can
+    // surface these removals.
+    const ir = makeIr({
+      http: undefined,
+      crons: [{ style: "method", file: "src/app.ts", className: "Jobs", method: "sweep", source: "src/app.ts:1", id: "sweep", workersId: "AppModule", schedule: { kind: "rate", value: 1, unit: "minute" } }],
+      queues: [{ style: "method", file: "src/app.ts", className: "Mailer", method: "send", source: "src/app.ts:1", id: "emails", name: "emails", workersId: "AppModule" }],
+      workers: [{ id: "AppModule", handlerEntry: "src/app.ts", appExport: "AppModule" }],
+    } as Partial<InfraIR>);
+
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-AppModule-dev"]),
+      priorNodeLambdas: [{ logicalId: "WorkerAppModuleFn1234", functionName: "myapp-AppModule-dev" }],
+      priorScheduleNames: new Set(["myapp-sweep-dev", "myapp-oldjob-dev"]),
+      priorQueueNames: new Set(["emails", "oldqueue"]),
+    });
+
+    const removed = res.filter((r) => r.action === "REMOVED").map((r) => [r.name, r.type]);
+    expect(removed).toEqual([
+      ["oldjob", "cron"],
+      ["oldqueue", "queue"],
+    ]);
+    // The surviving grouped resources are still reported (as UPDATED), never removed.
+    expect(res.find((r) => r.name === "sweep")!.action).toBe("UPDATED");
+    expect(res.find((r) => r.name === "emails")!.action).toBe("UPDATED");
+  });
+
+  it("reports a REMOVED http proxy when the app drops its http() marker", () => {
+    const ir = makeIr({ http: undefined } as Partial<InfraIR>);
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-app-dev"]),
+      priorNodeLambdas: [{ logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" }],
+    });
+    expect(res).toHaveLength(1);
+    expect(res[0]).toMatchObject({ name: "http", type: "http", action: "REMOVED" });
+  });
+
+  it("does not report REMOVED for a CDK-internal helper Lambda (not a laranja node)", () => {
+    // getStackSnapshot only surfaces laranja node Lambdas, so a helper never reaches
+    // here — but even if one did, an unknown-prefix logical id maps to a plain
+    // function. Passing only the still-present http Lambda yields zero REMOVED rows.
+    const ir = makeIr();
+    const res = buildDeployedResources({
+      ir,
+      region,
+      account,
+      outputs: {},
+      missingEnv: [],
+      priorPhysicalIds: new Set(["myapp-app-dev"]),
+      priorNodeLambdas: [{ logicalId: "HttpFn8A9B0C1D", functionName: "myapp-app-dev" }],
+    });
+    expect(res.some((r) => r.action === "REMOVED")).toBe(false);
   });
 
   it("reports the full inventory every time (http + every cron + every queue)", () => {
@@ -91,7 +238,7 @@ describe("buildDeployedResources", () => {
         { style: "function", file: "src/q.ts", exportName: "processOrder", source: "src/q.ts:1", id: "orders", name: "orders-queue" },
       ],
     });
-    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [] });
+    const res = buildDeployedResources({ ir, region, account, outputs: {}, missingEnv: [], priorPhysicalIds: new Set(), priorNodeLambdas: [] });
     expect(res.map((r) => r.name)).toEqual(["http", "cleanup", "orders"]);
   });
 });

@@ -29,30 +29,54 @@ export interface CronTuning {
 
 /**
  * DLQ for a queue — the id of another declared queue, plus the required
- * `maxReceiveCount` (after N failed receives → dead-letter).
+ * `maxReceiveCount` (after N failed receives → dead-letter). `Q` is the union of
+ * this project's queue names, so the generated config autocompletes `queue` to a
+ * real target; it defaults to `string` for the untyped fallback.
  */
-export interface QueueDlq {
-  queue: string;
+export interface QueueDlq<Q extends string = string> {
+  queue: Q;
   maxReceiveCount: number;
 }
 
 /** DLQ for a cron — the id of another declared queue. A failed async invoke dead-letters immediately, so there's no receive count. */
-export interface CronDlq {
-  queue: string;
+export interface CronDlq<Q extends string = string> {
+  queue: Q;
 }
 
 /** Per-resource overrides for the HTTP proxy: compute knobs only. */
 export type HttpResourceConfig = ComputeConfig;
 
-/** Per-resource overrides for a queue consumer: compute + queue tuning + a queue DLQ. */
-export interface QueueResourceConfig extends ComputeConfig, QueueTuning {
-  dlq?: QueueDlq;
+/**
+ * Compute for one worker Lambda, keyed by its module name. Under consolidation a
+ * Nest module is a single function, so memory/timeout/etc. live here — not on the
+ * individual cron/queue, which only owns its trigger (see `*TriggerConfig`).
+ */
+export type WorkerResourceConfig = ComputeConfig;
+
+/**
+ * A queue's TRIGGER‑level tuning (SQS + event source + DLQ) — no compute. Used for
+ * a grouped Nest queue, whose compute lives on its worker module. `Q` (the queue‑
+ * name union) types the DLQ target for autocomplete.
+ */
+export interface QueueTriggerConfig<Q extends string = string> extends QueueTuning {
+  dlq?: QueueDlq<Q>;
 }
 
-/** Per-resource overrides for a cron: compute + cron tuning + a cron DLQ. */
-export interface CronResourceConfig extends ComputeConfig, CronTuning {
-  dlq?: CronDlq;
+/** A cron's TRIGGER‑level tuning (schedule + async‑invoke + DLQ) — no compute. */
+export interface CronTriggerConfig<Q extends string = string> extends CronTuning {
+  dlq?: CronDlq<Q>;
 }
+
+/**
+ * Per-resource overrides for a STANDALONE queue consumer (Express, or a function‑
+ * style queue in Nest): compute + trigger, since the handler is its own Lambda.
+ */
+export interface QueueResourceConfig<Q extends string = string>
+  extends ComputeConfig, QueueTriggerConfig<Q> {}
+
+/** Per-resource overrides for a STANDALONE cron: compute + trigger (its own Lambda). */
+export interface CronResourceConfig<Q extends string = string>
+  extends ComputeConfig, CronTriggerConfig<Q> {}
 
 /**
  * The loose, kind-agnostic override shape — every knob optional and `dlq`'s
@@ -88,6 +112,14 @@ export interface LaranjaConfig {
   /** Plain env injected into every Lambda. */
   env?: Record<string, string>;
   /**
+   * Emit a per-app-stage monitoring dashboard (`<name>-<stage>`) with per-function
+   * invocations / errors / throttles / duration for the HTTP proxy and every
+   * cron/queue consumer. Provider-neutral — each back half maps it to its own
+   * primitives. HTTP status classes (2xx/4xx/5xx) come later with API Gateway.
+   * Defaults to true.
+   */
+  monitoring?: boolean;
+  /**
    * Default compute config (memory, timeout, …) applied to every function — the
    * HTTP proxy and each cron/queue consumer. Override per-resource via `resources`.
    */
@@ -121,6 +153,40 @@ export function stackName(name: string, stage: string): string {
 }
 
 /**
+ * The monitoring dashboard's physical name: `<name>-<stage>`, sanitized to the
+ * chars CloudWatch allows (A–Z a–z 0–9 - _) and capped at 255.
+ *
+ * Single source of truth: the back half names the dashboard from here, and the
+ * client builds the console deep link (`externalUrl`) from here, so the two can
+ * never drift. Provider-neutral name; each back half maps it to its own dashboard.
+ */
+export function dashboardName(name: string, stage: string): string {
+  return `${name}-${stage}`.replace(/[^A-Za-z0-9_-]/g, "-").slice(0, 255);
+}
+
+/**
+ * `laranja.config.ts` is ESM (`export default`), but the project it lives in is
+ * almost always "typeless" — a Nest/Express app whose package.json has no
+ * `"type": "module"` because its own build is CommonJS. Importing the config then
+ * makes Node detect the format by syntax and print a MODULE_TYPELESS_PACKAGE_JSON
+ * warning the user can't act on without breaking their app's CJS build. It's
+ * laranja's config, so laranja swallows exactly that one warning code — everything
+ * else Node emits still gets through. Idempotent; installed once, lazily.
+ */
+let typelessWarningSilenced = false;
+function silenceTypelessConfigWarning(): void {
+  if (typelessWarningSilenced) return;
+  typelessWarningSilenced = true;
+  const original = process.emitWarning.bind(process);
+  process.emitWarning = ((warning: unknown, ...args: unknown[]) => {
+    const opt = args[0];
+    const code = opt && typeof opt === "object" ? (opt as { code?: string }).code : args[1];
+    if (code === "MODULE_TYPELESS_PACKAGE_JSON") return;
+    return (original as (...a: unknown[]) => void)(warning, ...args);
+  }) as typeof process.emitWarning;
+}
+
+/**
  * Loads `laranja.config.ts` from the project dir. Runs under tsx, so importing a
  * TypeScript config module Just Works. Returns the config with defaults applied,
  * then any `overrides` (e.g. a `--stage` flag) layered on top.
@@ -128,17 +194,29 @@ export function stackName(name: string, stage: string): string {
 export async function loadConfig(
   projectDir: string,
   overrides: ConfigOverrides = {},
-): Promise<Required<Pick<LaranjaConfig, "env" | "stage" | "provider">> & LaranjaConfig> {
+): Promise<
+  Required<Pick<LaranjaConfig, "env" | "stage" | "provider" | "monitoring">> &
+    LaranjaConfig
+> {
   const file = path.join(projectDir, CONFIG_FILENAME);
   if (!existsSync(file)) {
-    throw new Error(`No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`);
+    throw new Error(
+      `No ${CONFIG_FILENAME} found in ${projectDir}. Run \`laranja init\` first.`,
+    );
   }
+  silenceTypelessConfigWarning();
   const mod = await import(pathToFileURL(file).href);
   const cfg: LaranjaConfig | undefined = mod.default ?? mod.config;
   if (!cfg) {
-    throw new Error(`${CONFIG_FILENAME} must \`export default\` a config object.`);
+    throw new Error(
+      `${CONFIG_FILENAME} must \`export default\` a config object.`,
+    );
   }
-  if (!cfg.name) throw new Error(`${CONFIG_FILENAME}: "name" is required.`);
+  if (!cfg.name) {
+    throw new Error(
+      `${CONFIG_FILENAME}: "name" is required — run \`laranja init\` to link this directory to a project.`,
+    );
+  }
   // The HTTP app is declared in code via an `http(app)` marker, which the scanner
   // resolves — there's no config field for it. The scanner raises a clear error
   // if there's ultimately nothing to deploy.
@@ -154,6 +232,7 @@ export async function loadConfig(
   return {
     stage: "dev",
     provider: "aws",
+    monitoring: true,
     env: {},
     ...cfg,
     // Overrides win over both defaults and the config file (only when set).

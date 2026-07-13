@@ -11,9 +11,9 @@ application — an Express app, some scheduled jobs, some queue consumers — an
 laranja deploys it to **your own AWS account**. There is no infrastructure
 project to maintain, no YAML to write, and no cloud console to click through.
 
-> laranja supports **Express** today. **NestJS support is coming** — and because
-> your app is reduced to a framework-neutral description internally, it'll work
-> without changing how you write your code.
+> laranja supports **Express** and **NestJS** — and because your app is reduced to
+> a framework-neutral description internally, more frameworks can follow without
+> changing how you write your code.
 
 ## The problem
 
@@ -35,7 +35,7 @@ facts out of your code and provisions exactly what they imply.
 ```ts
 // src/app.ts — mark your HTTP app, code-first
 import express from "express";
-import { http } from "@laranja/decorators";
+import { http } from "@alzulejos/laranja-decorators";
 
 const app = express();
 app.get("/health", (_req, res) => res.json({ ok: true }));
@@ -48,7 +48,7 @@ decorators. Use whichever you prefer:
 
 ```ts tab="Function"
 // src/jobs.ts
-import { cron, rate } from "@laranja/decorators";
+import { cron, rate } from "@alzulejos/laranja-decorators";
 
 export async function refreshCache() { /* ... */ }
 cron(rate(5, "minutes"), refreshCache);
@@ -56,7 +56,7 @@ cron(rate(5, "minutes"), refreshCache);
 
 ```ts tab="Class"
 // src/jobs.ts
-import { Cron, rate } from "@laranja/decorators";
+import { Cron, rate } from "@alzulejos/laranja-decorators";
 
 export class Jobs {
   @Cron(rate(5, "minutes"))
@@ -88,7 +88,7 @@ consumer — all in your own account, named deterministically.
 
 | Capability | How you declare it |
 |---|---|
-| HTTP API | An Express app, marked with the [`http()`](../reference/decorators-and-markers.md#http) marker. NestJS coming. |
+| HTTP API | An Express or NestJS app, marked with the [`http()`](../reference/decorators-and-markers.md#http) marker. |
 | Scheduled jobs | [`@Cron`](../reference/decorators-and-markers.md#cron) (class) or [`cron()`](../reference/decorators-and-markers.md#cron-marker) (function) |
 | Queue consumers | [`@Queue`](../reference/decorators-and-markers.md#queue) (class) or [`queue()`](../reference/decorators-and-markers.md#queue-marker) (function) |
 | Per-environment deploys | [Stages](../guides/stages-and-environments.md) (`--stage`) |

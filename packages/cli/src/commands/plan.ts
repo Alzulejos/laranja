@@ -22,12 +22,14 @@ const silentIoHost = {
  * and AWS credentials (to read the live stack). Nothing is applied.
  */
 export async function plan(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
+  const apiKey = resolveApiKey();
+  if (!apiKey) throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to plan.");
+
+  // loadConfig raises a clear "run `laranja init`" error if this directory isn't
+  // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
-
-  const apiKey = resolveApiKey();
-  if (!apiKey) throw new Error("Set LARANJA_API_KEY (or run `laranja init`) to plan.");
 
   const sp = ui.spinner("diffing against your deployed stack");
   try {

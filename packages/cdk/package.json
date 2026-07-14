@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-assembly",
-  "version": "0.2.5",
+  "version": "0.2.6",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,13 +15,13 @@
     "access": "public"
   },
   "dependencies": {
-    "@alzulejos/laranja-core": "0.2.5",
-    "@alzulejos/laranja-runtime": "0.2.5",
+    "@alzulejos/laranja-core": "0.2.6",
+    "@alzulejos/laranja-runtime": "0.2.6",
     "aws-cdk-lib": "^2.160.0",
     "constructs": "^10.3.0",
     "esbuild": "^0.28.1"
   },
   "devDependencies": {
-    "@alzulejos/laranja-scanner": "0.2.5"
+    "@alzulejos/laranja-scanner": "0.2.6"
   }
 }

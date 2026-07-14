@@ -29,7 +29,7 @@ function readJsonc(file: string): Record<string, any> | undefined {
 }
 
 /** The user's source root (default "src") and compiled out dir (default "dist"). */
-function resolveBuildDirs(projectDir: string): { sourceRoot: string; outDir: string } {
+export function resolveBuildDirs(projectDir: string): { sourceRoot: string; outDir: string } {
   const nestCli = readJsonc(path.join(projectDir, "nest-cli.json"));
   const tsconfig = readJsonc(path.join(projectDir, "tsconfig.json"));
   const sourceRoot = (nestCli?.sourceRoot as string) ?? "src";

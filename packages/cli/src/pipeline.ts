@@ -12,7 +12,8 @@ import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
 import { bundleEntries, computeAssetHashes, assembleFromTemplate } from "@alzulejos/laranja-assembly";
 import { writeResourceTypes } from "./resource-types.js";
-import { resolveNestCompiledEntry } from "./nest-build.js";
+import { resolveNestCompiledEntry, resolveBuildDirs } from "./nest-build.js";
+import { buildDepsLayer, type LambdaArch } from "./layer.js";
 import { step, note } from "./diagnostics.js";
 
 export interface Assembly {
@@ -47,7 +48,6 @@ interface BuildEnv {
  */
 async function prepareUpload(projectDir: string, env: BuildEnv) {
   const outRoot = path.join(projectDir, ".laranja");
-  const entryDir = path.join(outRoot, "entries");
   const buildDir = path.join(outRoot, "build");
   const cdkOutDir = path.join(outRoot, "cdk.out");
 
@@ -59,29 +59,41 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   }
   step("scan project");
   const ir = scan({ projectDir, config });
-  // Attach the resolved stage now, before bundling can throw — so a pre-synth
-  // failure report (e.g. an esbuild resolve error) still carries the stage.
+  // Attach the resolved stage now, before packaging can throw — so a pre-synth
+  // failure report still carries the stage.
   note({ stage: ir.app.stage });
   writeResourceTypes(projectDir, ir);
   step("bundle handlers");
-  // Nest: point every shim at the user's COMPILED output (DI metadata intact), not
-  // their .ts source — the HTTP bootstrap, the workers(AppModule) module, and each
-  // class-based provider. Express bundles straight from source (all undefined).
-  const isNest = ir.app.framework === "nest";
-  const httpEntry = isNest && ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
-  // Nest worker shims resolve both the provider file and each workers(...) module to
-  // their compiled paths through this — so multiple DI roots need no extra plumbing.
-  const resolveCompiled = isNest ? (file: string) => resolveNestCompiledEntry(projectDir, file) : undefined;
-  const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, resolveCompiled });
-  const handlers = await bundleEntries(entries, {
-    entryDir,
-    buildDir,
-    framework: ir.app.framework,
-    projectDir,
-  });
+  // No bundler: every shim imports the user's BUILT output (DI metadata intact) and
+  // resolves deps at runtime from the shared layer. Map each source file to its
+  // compiled path — the HTTP bootstrap, the workers(AppModule) module, and each
+  // class-based provider. Applies to both frameworks now (Express also needs a build,
+  // since nothing transpiles at deploy time); an unbuilt project errors in codegen.
+  const { outDir } = resolveBuildDirs(projectDir);
+  const httpEntry = ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
+  const resolveCompiled = (file: string) => resolveNestCompiledEntry(projectDir, file);
+  const entries = generateEntries(ir, { projectDir, httpEntry, resolveCompiled });
+  const handlers = bundleEntries(entries, { buildDir, projectDir, outDir });
   const assets = computeAssetHashes(handlers);
 
   return { projectId: config.projectId, ir, handlers, assets, cdkOutDir, region: env.region ?? config.region };
+}
+
+/**
+ * The Lambda architecture the server templated (every function shares one). Drives
+ * which platform's prebuilt native deps go in the layer. Defaults to arm64.
+ */
+function archFromTemplate(template: Record<string, unknown>): LambdaArch {
+  const resources = (template.Resources ?? {}) as Record<
+    string,
+    { Type?: string; Properties?: { Architectures?: string[] } }
+  >;
+  for (const res of Object.values(resources)) {
+    if (res.Type !== "AWS::Lambda::Function") continue;
+    const a = res.Properties?.Architectures?.[0];
+    if (a === "x86_64" || a === "arm64") return a;
+  }
+  return "arm64";
 }
 
 /**
@@ -114,12 +126,18 @@ export async function buildRemoteAssembly(
     throw new Error("Server returned a CDK project; expected a CloudFormation template to deploy.");
   }
 
+  step("build deps layer");
+  const arch = archFromTemplate(res.template);
+  const layerDir = buildDepsLayer({ projectDir, arch });
+
   step("assemble template");
   assembleFromTemplate({
     outdir: cdkOutDir,
     stackName: res.stackName,
     template: res.template,
     handlers,
+    layerDir,
+    arch,
     region,
     account: env.account,
   });
@@ -154,11 +172,16 @@ export async function buildPlanAssembly(
     throw new Error("Server did not return a template to diff.");
   }
 
+  const arch = archFromTemplate(res.template);
+  const layerDir = buildDepsLayer({ projectDir, arch });
+
   assembleFromTemplate({
     outdir: cdkOutDir,
     stackName: res.stackName,
     template: res.template,
     handlers,
+    layerDir,
+    arch,
     region,
     account: env.account,
   });

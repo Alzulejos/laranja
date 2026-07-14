@@ -3,32 +3,32 @@
 exports[`full output snapshot > mixed app + cron + queue generates a stable set of shims 1`] = `
 [
   {
-    "contents": "import app from "./dist/app.js";
+    "contents": "import app from "../../src/app";
 import { createHttpHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createHttpHandler(app);
 ",
-    "fileName": "http.mjs",
+    "fileName": "http.ts",
     "id": "http",
     "kind": "http",
   },
   {
-    "contents": "import { refreshCache } from "./dist/jobs.js";
+    "contents": "import { refreshCache } from "../../src/jobs";
 import { createScheduledHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createScheduledHandler(refreshCache);
 ",
-    "fileName": "cron-refreshCache.mjs",
+    "fileName": "cron-refreshCache.ts",
     "id": "refreshCache",
     "kind": "cron",
   },
   {
-    "contents": "import { Jobs } from "./dist/jobs.js";
+    "contents": "import { Jobs } from "../../src/jobs";
 import { createQueueHandler } from "@alzulejos/laranja-runtime";
 
 export const handler = createQueueHandler(Jobs, "sendEmails");
 ",
-    "fileName": "queue-Jobs-sendEmails.mjs",
+    "fileName": "queue-Jobs-sendEmails.ts",
     "id": "Jobs-sendEmails",
     "kind": "queue",
   },

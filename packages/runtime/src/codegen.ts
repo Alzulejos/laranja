@@ -22,53 +22,29 @@ export interface GeneratedEntry {
 export interface GenerateEntriesOptions {
   /** Absolute path to the user's project root. */
   projectDir: string;
+  /** Absolute path to the dir the entry files will be written to. */
+  entryDir: string;
   /**
-   * Absolute path to the runnable HTTP entry the shim imports (the built output the
-   * deploy ships), e.g. `dist/main.js`. For Nest this is the compiled bootstrap that
-   * carries the DI metadata their build emitted; for a plain-JS app it may be the
-   * source itself. Missing = project not built, and the shim generation errors.
+   * Absolute path the HTTP shim should import instead of `<projectDir>/<http.handlerEntry>`.
+   * Used for Nest: the shim imports the user's COMPILED bootstrap (e.g.
+   * `dist/main.js`, which carries the DI metadata their build emitted) rather than
+   * the `.ts` source. Ignored for the worker shims.
    */
   httpEntry?: string;
   /**
-   * Map a source file to its runnable (built) path — the compiled provider AND
-   * compiled `workers(...)` module for Nest (DI metadata intact), or the built JS
-   * for any TS project. Since nothing transpiles at deploy time, every handler
-   * resolves through this; a missing path means the project hasn't been built.
+   * Map a source file to its COMPILED path. Nest class-based workers must import the
+   * compiled provider AND their compiled `workers(...)` module (DI metadata intact),
+   * not the `.ts` source. Absent for Express, where shims bundle straight from source.
    */
   resolveCompiled?: (file: string) => string;
 }
 
-/**
- * Import specifier for a user's COMPILED file, resolvable at Lambda RUNTIME.
- *
- * We no longer bundle: each shim ships as `index.mjs` at the function-zip root, and
- * the user's build output is copied into that zip preserving its project-relative
- * path. So `<projectDir>/dist/main.js` deploys at `./dist/main.js` next to the shim.
- * Posix-style, and — unlike a bundler input — the `.js` extension is KEPT, because
- * Node's ESM loader requires explicit extensions on relative specifiers.
- */
-function runtimeSpec(projectDir: string, compiledAbs: string): string {
-  let rel = path.relative(projectDir, compiledAbs).split(path.sep).join("/");
+/** Build an import specifier from `fromDir` to a source file, posix-style, no extension. */
+function importSpecifier(fromDir: string, toFile: string): string {
+  let rel = path.relative(fromDir, toFile.replace(/\.(ts|tsx|mts|cts|js|jsx|mjs|cjs)$/, ""));
+  rel = rel.split(path.sep).join("/");
   if (!rel.startsWith(".")) rel = `./${rel}`;
   return rel;
-}
-
-/**
- * A shim can only import a file the user actually built. With no bundler there's no
- * on-the-fly transpile, so every handler needs runnable output the deploy can ship:
- * the compiled JS for a TypeScript project (Nest's build also carries the DI
- * metadata we rely on), or the source itself for a plain-JS project. The caller's
- * resolver supplies that path; a missing one means the project hasn't been built.
- */
-function requireCompiled(compiledAbs: string | undefined, what: string): string {
-  if (!compiledAbs) {
-    throw new Error(
-      `Deploying ${what} needs runnable build output, but none was found. ` +
-        `Build your app first (e.g. \`npm run build\`) so laranja can ship the ` +
-        `compiled output.`,
-    );
-  }
-  return compiledAbs;
 }
 
 /** Make an id safe to use as a file name. */
@@ -103,8 +79,8 @@ function workerDispatcherShim(
         `Add \`export default workers(${worker.id})\` and build first.`,
     );
   }
-  const resolve = (file: string) => runtimeSpec(opts.projectDir, opts.resolveCompiled!(file));
-  const workersSpec = resolve(worker.handlerEntry);
+  const resolve = opts.resolveCompiled;
+  const workersSpec = importSpecifier(opts.entryDir, resolve(worker.handlerEntry));
   const workersImport = importBinding("workersModule", worker.appExport, workersSpec);
 
   // Import each provider class once, even if it hosts several methods.
@@ -113,12 +89,12 @@ function workerDispatcherShim(
   const queueRows: string[] = [];
   for (const c of crons) {
     if (c.style !== "method") continue;
-    providerImports.set(c.className, resolve(c.file));
+    providerImports.set(c.className, importSpecifier(opts.entryDir, resolve(c.file)));
     cronRows.push(`      "${c.id}": [${c.className}, "${c.method}"],`);
   }
   for (const q of queues) {
     if (q.style !== "method") continue;
-    providerImports.set(q.className, resolve(q.file));
+    providerImports.set(q.className, importSpecifier(opts.entryDir, resolve(q.file)));
     queueRows.push(`      "${q.name}": [${q.className}, "${q.method}"],`);
   }
   const imports = [...providerImports].map(([cls, spec]) => `import { ${cls} } from "${spec}";`).join("\n");
@@ -175,13 +151,13 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   if (ir.http) {
     const local = isNest ? "bootstrap" : "app";
     const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
-    const httpTarget = requireCompiled(opts.httpEntry, "the HTTP app");
-    const httpSpec = runtimeSpec(opts.projectDir, httpTarget);
+    const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
+    const httpSpec = importSpecifier(opts.entryDir, httpTarget);
     const appImport = importBinding(local, ir.http.appExport, httpSpec);
     entries.push({
       id: "http",
       kind: "http",
-      fileName: "http.mjs",
+      fileName: "http.ts",
       handlerExport: "handler",
       contents: `${appImport}
 import { ${factory} } from "@alzulejos/laranja-runtime";
@@ -201,7 +177,7 @@ export const handler = ${factory}(${local});
     entries.push({
       id: w.id,
       kind: "worker",
-      fileName: `worker-${safe(w.id)}.mjs`,
+      fileName: `worker-${safe(w.id)}.ts`,
       handlerExport: "handler",
       contents: workerDispatcherShim(w, crons, queues, opts),
     });
@@ -211,13 +187,12 @@ export const handler = ${factory}(${local});
   // style). Grouped Nest crons are hosted by their worker Lambda above.
   for (const cron of ir.crons) {
     if (isGrouped(cron)) continue;
-    const compiled = requireCompiled(opts.resolveCompiled?.(cron.file), `cron "${cron.id}"`);
-    const spec = runtimeSpec(opts.projectDir, compiled);
+    const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
     const { importLine, factoryArgs } = handlerWiring(cron, spec);
     entries.push({
       id: cron.id,
       kind: "cron",
-      fileName: `cron-${safe(cron.id)}.mjs`,
+      fileName: `cron-${safe(cron.id)}.ts`,
       handlerExport: "handler",
       contents: `${importLine}
 import { createScheduledHandler } from "@alzulejos/laranja-runtime";
@@ -231,13 +206,12 @@ export const handler = createScheduledHandler(${factoryArgs});
   // queues are hosted by their worker Lambda above.
   for (const queue of ir.queues) {
     if (isGrouped(queue)) continue;
-    const compiled = requireCompiled(opts.resolveCompiled?.(queue.file), `queue "${queue.id}"`);
-    const spec = runtimeSpec(opts.projectDir, compiled);
+    const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
     const { importLine, factoryArgs } = handlerWiring(queue, spec);
     entries.push({
       id: queue.id,
       kind: "queue",
-      fileName: `queue-${safe(queue.id)}.mjs`,
+      fileName: `queue-${safe(queue.id)}.ts`,
       handlerExport: "handler",
       contents: `${importLine}
 import { createQueueHandler } from "@alzulejos/laranja-runtime";

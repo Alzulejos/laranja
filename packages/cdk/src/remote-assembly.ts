@@ -1,10 +1,9 @@
 import os from "node:os";
 import path from "node:path";
 import { mkdtempSync, writeFileSync } from "node:fs";
-import { App, Stack, type CfnResource } from "aws-cdk-lib";
+import { App, Stack } from "aws-cdk-lib";
 import { CfnInclude } from "aws-cdk-lib/cloudformation-include";
 import { Asset } from "aws-cdk-lib/aws-s3-assets";
-import { Architecture, Code, LayerVersion } from "aws-cdk-lib/aws-lambda";
 import type { BundledHandler } from "./bundle.js";
 
 export interface RemoteAssemblyOptions {
@@ -16,39 +15,8 @@ export interface RemoteAssemblyOptions {
   template: Record<string, unknown>;
   /** The locally bundled handlers (their dirs become the uploaded zips). */
   handlers: BundledHandler[];
-  /**
-   * Directory of the shared dependency layer (contains `nodejs/node_modules`).
-   * Registered as a LayerVersion and attached to every Lambda in the template, so
-   * the handler zips can stay tiny (just the shim + the user's built code). Omit to
-   * deploy without a layer.
-   */
-  layerDir?: string;
-  /** Target Lambda architecture — the layer must be built compatible with it. */
-  arch?: "arm64" | "x86_64";
   region?: string;
   account?: string;
-}
-
-/** Attach a shared deps layer to every Lambda function the server templated. */
-function attachLayer(
-  stack: Stack,
-  include: CfnInclude,
-  template: Record<string, unknown>,
-  layerDir: string,
-  arch: "arm64" | "x86_64",
-): void {
-  const layer = new LayerVersion(stack, "DepsLayer", {
-    code: Code.fromAsset(layerDir),
-    compatibleArchitectures: [arch === "arm64" ? Architecture.ARM_64 : Architecture.X86_64],
-  });
-  const resources = (template.Resources ?? {}) as Record<string, { Type?: string; Properties?: { Layers?: unknown[] } }>;
-  for (const [logicalId, res] of Object.entries(resources)) {
-    if (res.Type !== "AWS::Lambda::Function") continue;
-    const fn = include.getResource(logicalId) as CfnResource;
-    // Preserve any layers the template already set; append ours.
-    const existing = res.Properties?.Layers ?? [];
-    fn.addPropertyOverride("Layers", [...existing, layer.layerVersionArn]);
-  }
 }
 
 /**
@@ -80,9 +48,8 @@ export function assembleFromTemplate(opts: RemoteAssemblyOptions): string {
     stackName: opts.stackName,
     env: opts.account || opts.region ? { account: opts.account, region: opts.region } : undefined,
   });
-  const include = new CfnInclude(stack, "Template", { templateFile });
+  new CfnInclude(stack, "Template", { templateFile });
   opts.handlers.forEach((h, i) => new Asset(stack, `Asset${i}`, { path: h.assetDir }));
-  if (opts.layerDir) attachLayer(stack, include, template, opts.layerDir, opts.arch ?? "arm64");
 
   return app.synth().directory;
 }

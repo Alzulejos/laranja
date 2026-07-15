@@ -8,6 +8,7 @@ import {
   intervalToSchedule,
   isValidEnvName,
   type ComputeConfig,
+  type CorsConfig,
   type CronIR,
   type Framework,
   type HttpIR,
@@ -156,7 +157,15 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const queueNames = new Set(queues.map((q) => q.name));
   if (http) {
     http.compute = resolveCompute(config, "http");
+    http.cors = resolveCors(config.cors);
     rejectForeignKeys("http", "http app", config.resources?.["http"], COMPUTE_KEYS);
+  } else if (config.cors) {
+    // No HTTP app to open — a stray `cors` is almost certainly a mistake (config
+    // left over, or workers-only). Fail loudly rather than silently drop it.
+    throw new Error(
+      `laranja.config.ts: "cors" is set but this project has no HTTP app (no http() marker), ` +
+        `so there's no public endpoint to configure CORS on. Remove "cors" or add an HTTP app.`,
+    );
   }
   // A worker module is ONE Lambda: compute lives on the module key, shared by every
   // handler it hosts (see WorkersIR). Resolve it once per module.
@@ -229,6 +238,45 @@ function pickCompute(src: ComputeConfig | undefined): ComputeConfig {
 function resolveCompute(config: ScanInput["config"], id: string): ComputeConfig | undefined {
   const merged = { ...pickCompute(config.compute), ...pickCompute(config.resources?.[id]) };
   return Object.keys(merged).length > 0 ? merged : undefined;
+}
+
+/** HTTP methods a CORS policy may allow (plus "*" for all). Uppercased on read. */
+const CORS_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "*"]);
+
+/**
+ * Pick only the CORS fields from the config (dropping `undefined`), so a stray key
+ * never crosses the wire, normalize methods to upper case, and validate the rules
+ * every provider/browser enforces — an unknown method, and credentials with a
+ * wildcard origin. Both back halves (server-synth + eject) then trust the IR.
+ * Returns undefined for no CORS.
+ */
+function resolveCors(src: CorsConfig | undefined): CorsConfig | undefined {
+  if (!src) return undefined;
+  const out: CorsConfig = {};
+  if (src.allowOrigins !== undefined) out.allowOrigins = src.allowOrigins;
+  if (src.allowMethods !== undefined) {
+    out.allowMethods = src.allowMethods.map((m) => {
+      const method = m === "*" ? "*" : m.toUpperCase();
+      if (!CORS_METHODS.has(method)) {
+        throw new Error(
+          `laranja.config.ts: cors.allowMethods has an unknown method "${m}". ` +
+            `Use any of: ${[...CORS_METHODS].join(", ")}.`,
+        );
+      }
+      return method;
+    });
+  }
+  if (src.allowHeaders !== undefined) out.allowHeaders = src.allowHeaders;
+  if (src.exposeHeaders !== undefined) out.exposeHeaders = src.exposeHeaders;
+  if (src.allowCredentials !== undefined) out.allowCredentials = src.allowCredentials;
+  if (src.maxAge !== undefined) out.maxAge = src.maxAge;
+  if (out.allowCredentials && out.allowOrigins?.includes("*")) {
+    throw new Error(
+      `laranja.config.ts: cors.allowCredentials cannot be combined with a wildcard ` +
+        `origin ("*"). List the explicit origins you want to allow credentials from.`,
+    );
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 /** Every `resources` key must name a real resource — a typo'd id is a hard error. */

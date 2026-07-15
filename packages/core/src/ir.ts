@@ -97,6 +97,31 @@ export interface HttpRoute {
   source: SourceLocation;
 }
 
+/**
+ * Cross-origin resource sharing for the HTTP app's public endpoint.
+ *
+ * Provider-neutral: each back half maps it to the platform's native HTTP front-door
+ * CORS — an AWS Lambda Function URL's `Cors`, an Azure Function App's CORS settings,
+ * a GCP Cloud Run / Cloud Functions CORS policy. Absent means no CORS (same-origin
+ * only) and the back half emits nothing. Field names mirror the CORS response
+ * headers so they read the same on any provider.
+ */
+export interface CorsConfig {
+  /** Allowed origins, e.g. `["https://app.example.com"]` or `["*"]`. */
+  allowOrigins?: string[];
+  /** Allowed HTTP methods, e.g. `["GET", "POST"]` or `["*"]`. */
+  allowMethods?: string[];
+  /** Request headers a client may send, e.g. `["Content-Type", "Authorization"]`. */
+  allowHeaders?: string[];
+  /** Response headers exposed to the browser beyond the CORS-safelisted defaults. */
+  exposeHeaders?: string[];
+  /** Allow credentials (cookies / `Authorization`) on cross-origin requests. Cannot
+   *  be combined with a wildcard `allowOrigins: ["*"]` (the browser rejects it). */
+  allowCredentials?: boolean;
+  /** Seconds a browser may cache the preflight (`OPTIONS`) response. */
+  maxAge?: number;
+}
+
 export interface HttpIR {
   /** Project-relative module that exports the framework app (the proxy target). */
   handlerEntry: string;
@@ -105,6 +130,8 @@ export interface HttpIR {
   routes: HttpRoute[];
   /** Resolved compute config for the proxy function (keyed as "http" in `resources`). */
   compute?: ComputeConfig;
+  /** Cross-origin config for the public endpoint; absent = no CORS (same-origin only). */
+  cors?: CorsConfig;
 }
 
 /**

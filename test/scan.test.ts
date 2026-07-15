@@ -256,6 +256,70 @@ describe("http app resolution", () => {
   });
 });
 
+describe("cors", () => {
+  const httpApp = {
+    "src/app.ts": `
+      import express from "express";
+      import { http } from "@alzulejos/laranja-decorators";
+      export default http(express());
+    `,
+  };
+
+  test("is absent from the IR by default (off unless configured)", () => {
+    const dir = makeProject(httpApp);
+    const ir = scan({ projectDir: dir, config: cfg() });
+    expect(ir.http?.cors).toBeUndefined();
+  });
+
+  test("carries configured fields into http.cors, upper-casing methods", () => {
+    const dir = makeProject(httpApp);
+    const ir = scan({
+      projectDir: dir,
+      config: cfg({
+        cors: {
+          allowOrigins: ["https://app.example.com"],
+          allowMethods: ["get", "post"],
+          allowCredentials: true,
+          maxAge: 600,
+        },
+      }),
+    });
+    expect(ir.http?.cors).toEqual({
+      allowOrigins: ["https://app.example.com"],
+      allowMethods: ["GET", "POST"],
+      allowCredentials: true,
+      maxAge: 600,
+    });
+  });
+
+  test("errors when cors is set but there's no HTTP app", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { cron, rate } from "@alzulejos/laranja-decorators";
+        export async function tick() {}
+        cron(rate(1, "hour"), tick);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ cors: { allowOrigins: ["*"] } }) })).toThrow(
+      /no HTTP app/,
+    );
+  });
+
+  test("rejects credentials with a wildcard origin", () => {
+    const dir = makeProject(httpApp);
+    expect(() =>
+      scan({ projectDir: dir, config: cfg({ cors: { allowOrigins: ["*"], allowCredentials: true } }) }),
+    ).toThrow(/allowCredentials cannot be combined with a wildcard/);
+  });
+
+  test("rejects an unknown CORS method", () => {
+    const dir = makeProject(httpApp);
+    expect(() =>
+      scan({ projectDir: dir, config: cfg({ cors: { allowMethods: ["FETCH"] } }) }),
+    ).toThrow(/unknown method "FETCH"/);
+  });
+});
+
 describe("nothing to deploy", () => {
   test("throws when there is no app and no handlers", () => {
     const dir = makeProject({

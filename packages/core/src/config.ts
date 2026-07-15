@@ -1,7 +1,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
-import type { CloudProvider, ComputeConfig, Framework } from "./ir.js";
+import type { CloudProvider, ComputeConfig, CorsConfig, Framework } from "./ir.js";
 
 /** Queue-only tuning knobs (SQS + event-source). */
 export interface QueueTuning {
@@ -119,6 +119,17 @@ export interface LaranjaConfig {
    * Defaults to true.
    */
   monitoring?: boolean;
+  /**
+   * Cross-origin resource sharing for your HTTP app's public endpoint. Omitted (the
+   * default) means CORS off — the browser only allows same-origin requests. Opt in
+   * by listing what you want to allow:
+   *
+   *   cors: { allowOrigins: ["https://app.example.com"], allowMethods: ["GET", "POST"] }
+   *
+   * Provider-neutral; on AWS it configures the Lambda Function URL's CORS. Has no
+   * effect on a workers-only project (there's no HTTP endpoint to open).
+   */
+  cors?: CorsConfig;
   /**
    * Default compute config (memory, timeout, …) applied to every function — the
    * HTTP proxy and each cron/queue consumer. Override per-resource via `resources`.

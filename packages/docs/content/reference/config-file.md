@@ -43,6 +43,7 @@ it. For a deploy with no HTTP app, just omit the marker (see
 | `profile` | | — | AWS named profile to deploy with. |
 | `framework` | | _auto-detected_ | Override framework detection (e.g. `"express"`). |
 | `env` | | `{}` | Plain environment variables injected into every Lambda. See [Environment variables](../guides/environment-variables.md). |
+| `cors` | | _off_ | Cross-origin access for your HTTP app's public endpoint. Off by default (same-origin only). See [cors](#cors). |
 | `compute` | | `{ memory: 256, timeout: 30 }` | Default memory (MB) and timeout (s) for **every** function. See [compute](#compute). |
 | `resources` | | `{}` | Per-resource overrides keyed by resource id (`http`, or a cron/queue id). See [resources](#resources). |
 | `projectId` | ✅ | — | Project id from the laranja dashboard. Required by the server-side build (`plan`/`deploy`/`eject`); `laranja init` fills it in. |
@@ -66,6 +67,39 @@ The default is `"dev"`. It's part of resource names and is injected into every
 Lambda as `process.env.STAGE`. The [`--stage`](../guides/stages-and-environments.md)
 flag overrides it per command — the recommended way to drive multiple
 environments from one config.
+
+### `cors`
+
+Cross-origin resource sharing for your HTTP app's public endpoint. **Off by
+default** — with no `cors` set, browsers only allow same-origin requests (calls
+from your server, `curl`, or mobile apps are unaffected either way). Opt in by
+listing what you want to allow:
+
+```ts
+const config: LaranjaConfig = {
+  name: "my-api",
+  projectId: "proj_…",
+  cors: {
+    allowOrigins: ["https://app.example.com"],
+    allowMethods: ["GET", "POST"],
+    allowHeaders: ["Content-Type", "Authorization"],
+  },
+};
+```
+
+| Key | Description |
+|---|---|
+| `allowOrigins` | Origins allowed to call the endpoint, e.g. `["https://app.example.com"]` or `["*"]`. |
+| `allowMethods` | HTTP methods allowed, e.g. `["GET", "POST"]` or `["*"]`. |
+| `allowHeaders` | Request headers a browser may send. |
+| `exposeHeaders` | Response headers exposed to the browser beyond the CORS-safelisted defaults. |
+| `allowCredentials` | Allow cookies / `Authorization` on cross-origin requests. Can't be combined with a wildcard `allowOrigins: ["*"]`. |
+| `maxAge` | Seconds a browser may cache the preflight (`OPTIONS`) response. |
+
+The fields are provider-neutral — on AWS they configure the HTTP app's Lambda
+Function URL CORS. `cors` has no effect on a
+[workers-only deployment](#workers-only-deployments) (there's no public endpoint
+to open), and setting it there is a hard error rather than a silent no-op.
 
 ### `compute`
 

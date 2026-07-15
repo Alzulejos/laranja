@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-scanner",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -15,7 +15,7 @@
     "access": "public"
   },
   "dependencies": {
-    "@alzulejos/laranja-core": "0.2.8",
+    "@alzulejos/laranja-core": "0.2.9",
     "ts-morph": "^23.0.0"
   }
 }

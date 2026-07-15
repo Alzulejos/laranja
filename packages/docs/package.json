@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-docs",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "description": "Canonical laranja documentation, parsed and exported as a module for any frontend to render.",
   "license": "Apache-2.0",
   "type": "module",

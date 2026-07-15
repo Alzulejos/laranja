@@ -1,6 +1,7 @@
 import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
+import { usesWebpackBuilder } from "../nest-build.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
 import { summarizePlan, type StackDiffView } from "../plan-summary.js";
@@ -30,6 +31,18 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   const config = await loadConfig(projectDir, { stage: opts.stage });
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
+
+  // The webpack builder renames the bootstrap export, which laranja resolves by
+  // name — deploys against a webpacked build fail to find it. Flag it here in the
+  // cheap path so it's caught before deploy. See docs → Reference → Troubleshooting.
+  if (usesWebpackBuilder(projectDir)) {
+    ui.warn(
+      "nest-cli.json uses the webpack builder. laranja needs the tsc builder — " +
+        "webpack renames the exported bootstrap function and the deploy can't find it. " +
+        "Remove the webpack builder (or `--webpack`) from your build. " +
+        "See https://laranja.io/docs/reference/troubleshooting#nestjs-webpack-builder",
+    );
+  }
 
   const sp = ui.spinner("diffing against your deployed stack");
   try {

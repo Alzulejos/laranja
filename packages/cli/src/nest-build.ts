@@ -28,6 +28,34 @@ function readJsonc(file: string): Record<string, any> | undefined {
   }
 }
 
+/**
+ * Detect whether the user's `nest-cli.json` selects the **webpack** builder.
+ *
+ * laranja packages the user's compiled entry and resolves the exported bootstrap
+ * function by name. Webpack bundles the whole app into one file and scope-hoists /
+ * renames identifiers, so the `bootstrap` export becomes something like `bootstrap2`
+ * and the module's top-level export is emitted as a synthetic `__FUNCTION__` — the
+ * name we look for no longer exists. The `tsc` builder (the Nest default) mirrors
+ * each source file 1:1 and keeps the export intact, so laranja needs that layout.
+ *
+ * Covers the config-based signals: `compilerOptions.webpack: true`,
+ * `compilerOptions.builder: "webpack"`, and `compilerOptions.builder.type: "webpack"`.
+ * (The `nest build --webpack` CLI flag isn't visible from config; the build/synth
+ * step catches that case by asserting the export exists.)
+ *
+ * Docs: https://laranja.io/docs/reference/troubleshooting#nestjs-webpack-builder
+ */
+export function usesWebpackBuilder(projectDir: string): boolean {
+  const nestCli = readJsonc(path.join(projectDir, "nest-cli.json"));
+  const co = nestCli?.compilerOptions;
+  if (!co) return false;
+  if (co.webpack === true) return true;
+  const builder = co.builder;
+  if (builder === "webpack") return true;
+  if (builder && typeof builder === "object" && builder.type === "webpack") return true;
+  return false;
+}
+
 /** The user's source root (default "src") and compiled out dir (default "dist"). */
 export function resolveBuildDirs(projectDir: string): { sourceRoot: string; outDir: string } {
   const nestCli = readJsonc(path.join(projectDir, "nest-cli.json"));

@@ -21,8 +21,26 @@ import {
   type ApiError,
   type ApiErrorCode,
 } from "./api.js";
+import { createRequire } from "node:module";
 import { loadStoredApiKey } from "./auth.js";
 import { CONFIG_FILENAME } from "./config.js";
+
+/**
+ * The installed CLI version, sent as `x-cli-version` on every API request so the
+ * server can identify (and, in future, reject) unsupported clients. Sourced from
+ * this package's own `package.json` — core + cli are version-locked in lockstep
+ * by `scripts/set-version.mjs`, so core's version *is* the CLI version. Resolves
+ * in both dev (`src/`) and the published build (`dist/`) since `../package.json`
+ * is the package root either way (core is plain `tsc`, 1:1 src→dist).
+ */
+export const CLI_VERSION: string = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    return (req("../package.json") as { version: string }).version;
+  } catch {
+    return "unknown";
+  }
+})();
 
 /** Default server URL for local development. Override with `LARANJA_API_URL`. */
 export const DEFAULT_API_URL = "https://api.laranja.io";
@@ -151,6 +169,7 @@ async function apiRequest<T>(
       method,
       headers: {
         "x-api-key": opts.apiKey,
+        "x-cli-version": CLI_VERSION,
         ...(opts.projectId ? { "x-project-id": opts.projectId } : {}),
         ...(opts.body !== undefined
           ? { "Content-Type": "application/json" }

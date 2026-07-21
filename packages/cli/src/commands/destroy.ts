@@ -1,5 +1,6 @@
 import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@alzulejos/laranja-core";
 import { getAccountId, deleteStack } from "../aws.js";
+import { destroyAzure } from "./destroy-azure.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
@@ -8,6 +9,12 @@ import * as ui from "../ui.js";
 export async function destroy(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Dispatch before any AWS-specific work (account resolution, CloudFormation).
+  if (config.provider === "azure") {
+    return destroyAzure(projectDir, opts);
+  }
+
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 

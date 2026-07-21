@@ -29,6 +29,18 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   // loadConfig raises a clear "run `laranja init`" error if this directory isn't
   // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Azure plan is blocked on ONE thing: `/diff` (the read-only synth) only
+  // returns CloudFormation. ARM `what-if` is the natural equivalent and the SDK
+  // exposes it, but `plan` must not call `/synth` - that opens a deployment row
+  // and counts against quota. Fail clearly rather than with an AWS creds error.
+  if (config.provider === "azure") {
+    throw new Error(
+      "`laranja plan` isn't wired up for Azure yet - the server's read-only synth doesn't\n" +
+        "  return an ARM template, so there's nothing to preview against.",
+    );
+  }
+
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 

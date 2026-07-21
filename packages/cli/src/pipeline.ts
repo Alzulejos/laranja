@@ -6,6 +6,8 @@ import {
   postDiff,
   ApiRequestError,
   apiErrorMessage,
+  AZURE_DEFAULT_TIMEOUT_SECONDS,
+  type AzureHandlerAsset,
   type InfraIR,
 } from "@alzulejos/laranja-core";
 import { scan } from "@alzulejos/laranja-scanner";
@@ -74,7 +76,15 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
   const httpEntry = isNest && ir.http ? resolveNestCompiledEntry(projectDir, ir.http.handlerEntry) : undefined;
   const resolveCompiled = isNest ? (file: string) => resolveNestCompiledEntry(projectDir, file) : undefined;
   const entries = generateEntries(ir, { projectDir, entryDir, httpEntry, resolveCompiled });
-  const handlers = await bundleEntries(entries, { entryDir, buildDir, projectDir });
+  const handlers = await bundleEntries(entries, {
+    entryDir,
+    buildDir,
+    projectDir,
+    provider: ir.app.provider,
+    // Azure's function timeout lives in host.json, inside the package — so it
+    // must be known before bundling, since the package hash is computed here.
+    httpTimeoutSeconds: ir.http?.compute?.timeout ?? AZURE_DEFAULT_TIMEOUT_SECONDS,
+  });
   const assets = computeAssetHashes(handlers);
 
   return { projectId: config.projectId, ir, handlers, assets, cdkOutDir, region: env.region ?? config.region };
@@ -124,6 +134,66 @@ export async function buildRemoteAssembly(
   });
 
   return { ir, stackName: res.stackName, cdkOutDir, region, deploymentId: res.deploymentId, projectId };
+}
+
+/** An Azure deploy carries the ARM template plus where the package must go. */
+export interface AzureRemoteAssembly {
+  ir: InfraIR;
+  template: Record<string, unknown>;
+  assets: AzureHandlerAsset[];
+  names: { functionApp: string; storageAccount: string; container: string };
+  warnings: { code: string; message: string }[];
+  /** Absolute path to each handler's bundled output dir, keyed by handler id. */
+  assetDirsById: Record<string, string>;
+  deploymentId: string;
+  projectId: string;
+}
+
+/**
+ * Server build for an Azure deploy. Same front half as AWS (scan, bundle,
+ * fingerprint, `/synth`) — only the artifact differs, so the source still never
+ * leaves the machine. There's no assembly step: the returned ARM template is
+ * submitted directly.
+ */
+export async function buildAzureAssembly(
+  projectDir: string,
+  env: BuildEnv,
+  apiKey: string,
+): Promise<AzureRemoteAssembly> {
+  const { projectId, ir, handlers, assets } = await prepareUpload(projectDir, env);
+
+  step("server synth");
+  let res;
+  try {
+    res = await postSynth(
+      { project: ir.app.name, stage: ir.app.stage, artifact: "arm", ir, assets },
+      apiKey,
+      projectId,
+    );
+  } catch (err) {
+    if (err instanceof ApiRequestError) throw new Error(apiErrorMessage("Synth failed", err));
+    throw err;
+  }
+  note({ deploymentId: res.deploymentId });
+  if (res.artifact !== "arm") {
+    throw new Error(
+      `Server returned a "${res.artifact}" artifact; expected "arm" for an Azure project.`,
+    );
+  }
+
+  const assetDirsById: Record<string, string> = {};
+  for (const h of handlers) assetDirsById[h.id] = h.assetDir;
+
+  return {
+    ir,
+    template: res.template,
+    assets: res.assets,
+    names: res.names,
+    warnings: res.warnings ?? [],
+    assetDirsById,
+    deploymentId: res.deploymentId,
+    projectId,
+  };
 }
 
 /**

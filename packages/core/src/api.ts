@@ -100,7 +100,7 @@ export interface CreateProjectResponse {
 /* -------------------------------------------------------------------------- */
 
 /** The artifact the client wants from `/synth`. `cdk` requires a paid tier. */
-export type SynthArtifact = "cloudformation" | "cdk";
+export type SynthArtifact = "cloudformation" | "cdk" | "arm";
 
 /**
  * Per-handler content hash of the client-built zip, keyed by handler id
@@ -125,6 +125,26 @@ export interface HandlerAsset {
   hash: string;
   /** S3 object key the template references (in the bootstrap assets bucket). */
   s3Key: string;
+}
+
+/**
+ * What `/synth` reports back per handler on Azure.
+ *
+ * Same idea as `HandlerAsset`, different destination: the package goes to a blob
+ * container, and the function app fetches it from there on startup. What the
+ * client needs to know is WHERE TO UPLOAD.
+ */
+export interface AzureHandlerAsset {
+  /** Handler id — matches the client's bundled-zip id ("http" today). */
+  id: string;
+  /** Short label (e.g. "app"). */
+  label: string;
+  /** Content hash supplied for this handler. */
+  hash: string;
+  /** Blob name within the deployment container. */
+  blobName: string;
+  /** Container the package must be uploaded to. */
+  container: string;
 }
 
 /** `POST /v1/synth` body. */
@@ -178,8 +198,30 @@ export interface EjectResponse {
   files: GeneratedFile[];
 }
 
+/**
+ * Azure: the synthesized ARM template the CLI then deploys.
+ *
+ * No `stackName` — ARM has no stack concept; a deployment is named at submit
+ * time by the client. The template is environment-agnostic (location comes from
+ * the resource group), so the server never learns where a deploy lands.
+ */
+export interface ArmSynthResponse extends SynthResponseBase {
+  artifact: "arm";
+  /** ARM template as JSON. */
+  template: Record<string, unknown>;
+  /** Per-handler blob locations the client must upload to before deploying. */
+  assets: AzureHandlerAsset[];
+  /** Resolved resource names the client needs for upload + reporting. */
+  names: { functionApp: string; storageAccount: string; container: string };
+  /** Non-fatal mapping warnings (e.g. memory snapped to an instance size). */
+  warnings?: { code: string; message: string }[];
+}
+
 /** `200` response from `/synth` — discriminated on `artifact`. */
-export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
+export type SynthResponse =
+  | CloudFormationSynthResponse
+  | CdkSynthResponse
+  | ArmSynthResponse;
 
 /**
  * `200` response from `/diff` — a read-only synth. Same fields as the

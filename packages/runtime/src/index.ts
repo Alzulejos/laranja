@@ -1,5 +1,6 @@
 export { createHttpHandler } from "./http.js";
 export type { FrameworkApp } from "./http.js";
+export { registerAzureHttp } from "./azure-http.js";
 export { createNestHttpHandler } from "./nest-http.js";
 export type { NestAppLike, NestBootstrap } from "./nest-http.js";
 export { createScheduledHandler } from "./scheduled.js";

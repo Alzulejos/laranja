@@ -3,6 +3,18 @@ import { createRequire } from "node:module";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { build, type Plugin } from "esbuild";
 import type { GeneratedEntry } from "@alzulejos/laranja-runtime";
+import {
+  AZURE_DEFAULT_TIMEOUT_SECONDS,
+  buildAzureHostJson,
+  type CloudProvider,
+} from "@alzulejos/laranja-core";
+
+/**
+ * Version range declared in the generated Azure `package.json`. Kept in step
+ * with `@alzulejos/laranja-runtime`'s own dependency — the shim is bundled
+ * against that copy, so a wide drift here would install a second one.
+ */
+const AZURE_FUNCTIONS_RANGE = "^4.16.2";
 
 /**
  * LOCAL PARITY: the one rule that makes bundling arbitrary user code safe.
@@ -164,6 +176,44 @@ export interface BundleOptions {
   buildDir: string;
   /** User project root — resolution baseline for the local-parity rule. */
   projectDir: string;
+  /**
+   * Target cloud; decides the asset LAYOUT (not the bundling itself). Lambda
+   * loads a bare `index.cjs` from the zip, but the Azure Functions host expects
+   * a project it can detect — see `writeAzurePackageFiles`. Defaults to "aws".
+   */
+  provider?: CloudProvider;
+  /** Resolved HTTP timeout in seconds — Azure only, lands in host.json. */
+  httpTimeoutSeconds?: number;
+}
+
+/**
+ * The files an Azure Functions deployment package needs beside the bundle.
+ *
+ * ⚠️ Both MUST be at the ZIP ROOT. If the zip has a parent folder
+ * (`project/host.json`), the Functions host detects NO FUNCTIONS AT ALL — it
+ * doesn't error, it just serves nothing. That silent failure is why this is
+ * centralised here and pinned by a test.
+ *
+ * `main` tells the host which file registers functions. Everything the user's
+ * app imports is already esbuild-inlined, so the only declared dependency is the
+ * Functions library itself.
+ *
+ * `host.json` carries the function TIMEOUT, which is not an ARM property — see
+ * `buildAzureHostJson` in core for why it is built client-side.
+ */
+function writeAzurePackageFiles(assetDir: string, timeoutSeconds: number): void {
+  const pkg = {
+    name: "laranja-function",
+    private: true,
+    // CommonJS: esbuild emits `format: "cjs"`, and omitting "type" keeps .js CJS.
+    main: "index.js",
+    dependencies: { "@azure/functions": AZURE_FUNCTIONS_RANGE },
+  };
+  writeFileSync(path.join(assetDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  writeFileSync(
+    path.join(assetDir, "host.json"),
+    `${JSON.stringify(buildAzureHostJson(timeoutSeconds), null, 2)}\n`,
+  );
 }
 
 /**
@@ -188,16 +238,23 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     entryPoints[`${assetName}/index`] = path.join(opts.entryDir, e.fileName);
   }
 
+  const isAzure = opts.provider === "azure";
   const natives = new Map<string, string>();
   await build({
     entryPoints,
     outdir: opts.buildDir,
     bundle: true,
     platform: "node",
-    target: "node20",
+    // Flex Consumption runs Node 22; Lambda runs 20.
+    target: isAzure ? "node22" : "node20",
     format: "cjs",
-    outExtension: { ".js": ".cjs" },
-    external: ["@aws-sdk/*", "aws-sdk"],
+    // Azure resolves the entry through package.json `main`, which must point at
+    // a real file — so emit `index.js` there (still CJS, since the generated
+    // package.json omits "type"). Lambda is handed `index.cjs` directly.
+    ...(isAzure ? {} : { outExtension: { ".js": ".cjs" } }),
+    // The Lambda runtime PROVIDES the AWS SDK, so excluding it keeps zips small.
+    // Nothing provides it on Azure: anything imported must be in the bundle.
+    external: isAzure ? [] : ["@aws-sdk/*", "aws-sdk"],
     plugins: [localParityPlugin(opts.projectDir, natives)],
     logLevel: "warning",
   });
@@ -206,11 +263,17 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     const assetDir = path.join(opts.buildDir, assetNameById.get(e.id)!);
     // Ship externalized native packages next to the bundle that requires them.
     if (natives.size > 0) copyNativeClosure(natives, assetDir);
+    // Azure packages are a project the host inspects, not a bare file.
+    if (isAzure) {
+      writeAzurePackageFiles(assetDir, opts.httpTimeoutSeconds ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
+    }
     return {
       id: e.id,
       kind: e.kind,
       assetDir,
-      handler: `index.${e.handlerExport}`,
+      // Azure shims register with the host instead of exporting a symbol (empty
+      // handlerExport), so there's no `file.export` handler to report.
+      handler: e.handlerExport ? `index.${e.handlerExport}` : "",
     };
   });
 }

@@ -14,7 +14,11 @@ export interface GeneratedEntry {
   kind: "http" | "cron" | "queue" | "worker";
   /** File name to write under the entry dir. */
   fileName: string;
-  /** Exported handler symbol (always "handler" for now). */
+  /**
+   * Exported handler symbol ("handler" on AWS). EMPTY on Azure, where the shim
+   * registers with the Functions host as a side effect and there is no symbol to
+   * export — the host discovers functions from the loaded package.
+   */
   handlerExport: string;
   contents: string;
 }
@@ -150,21 +154,46 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   // and its shim imports the COMPILED bootstrap via `opts.httpEntry`.
   if (ir.http) {
     const local = isNest ? "bootstrap" : "app";
-    const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
     const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
     const httpSpec = importSpecifier(opts.entryDir, httpTarget);
     const appImport = importBinding(local, ir.http.appExport, httpSpec);
-    entries.push({
-      id: "http",
-      kind: "http",
-      fileName: "http.ts",
-      handlerExport: "handler",
-      contents: `${appImport}
+
+    // Azure has no handler export to look up: the Functions host discovers
+    // functions by loading the package and reading what it registered. So the
+    // shim REGISTERS (a side effect at module top level) instead of exporting.
+    // `handlerExport` is left empty to say so.
+    if (ir.app.provider === "azure") {
+      if (isNest) {
+        throw new Error(
+          `Azure support is Express-only today — this project's http() marker is a NestJS bootstrap.\n` +
+            `  Deploy to AWS (provider: "aws") for now; Azure + NestJS is the next step.`,
+        );
+      }
+      entries.push({
+        id: "http",
+        kind: "http",
+        fileName: "http.ts",
+        handlerExport: "",
+        contents: `${appImport}
+import { registerAzureHttp } from "@alzulejos/laranja-runtime";
+
+registerAzureHttp(${local});
+`,
+      });
+    } else {
+      const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
+      entries.push({
+        id: "http",
+        kind: "http",
+        fileName: "http.ts",
+        handlerExport: "handler",
+        contents: `${appImport}
 import { ${factory} } from "@alzulejos/laranja-runtime";
 
 export const handler = ${factory}(${local});
 `,
-    });
+      });
+    }
   }
 
   // Worker Lambdas: one per `workers()` module, hosting all its grouped (method-

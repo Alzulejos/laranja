@@ -11,6 +11,7 @@ import {
   resolveDeclaredEnv,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
+import { deployAzure } from "./deploy-azure.js";
 import { getAccountId, getStackSnapshot, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
@@ -36,6 +37,13 @@ export async function deploy(
   // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Dispatch on provider BEFORE anything AWS-specific - account resolution,
+  // bootstrap and the CDK toolkit below are all AWS-only concepts.
+  if (config.provider === "azure") {
+    return deployAzure(projectDir, opts);
+  }
+
   const region = requireRegion(config.region);
   note({ project: config.name, stage: config.stage, region });
   applyAwsEnv({ region, profile: config.profile });

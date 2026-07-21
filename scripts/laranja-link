@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# laranja-link — point a test project at the monorepo packages via `file:` deps.
+#
+# Local development only. Never published.
+#
+# WHY THIS IS NEEDED, and why forgetting it fails badly:
+#
+# The generated entry shim lives at <project>/.laranja/entries/ and imports
+# `@alzulejos/laranja-runtime`. esbuild resolves that from the SHIM's directory,
+# i.e. from YOUR project's node_modules — not from the monorepo. If it isn't
+# installed there, the bundler's local-parity rule treats it as an optional peer
+# and marks it EXTERNAL. The bundle then builds cleanly and the deployed function
+# dies at runtime with MODULE_NOT_FOUND.
+#
+# `file:` deps (rather than `npm link`) match the project rule that examples adapt
+# to the packages, never the reverse.
+#
+# Usage:
+#   laranja-link                 # link into $PWD
+#   laranja-link ../my-api       # link into another project
+set -euo pipefail
+
+LARANJA_REPO="${LARANJA_REPO:-/Users/ferasallaou/dev/laranja}"
+TARGET="${1:-$PWD}"
+
+if [[ ! -f "$TARGET/package.json" ]]; then
+  echo "laranja-link: no package.json in $TARGET" >&2
+  exit 1
+fi
+if [[ ! -d "$LARANJA_REPO/packages/cli" ]]; then
+  echo "laranja-link: no laranja checkout at $LARANJA_REPO (set LARANJA_REPO)" >&2
+  exit 1
+fi
+
+TARGET="$(cd "$TARGET" && pwd)"
+echo "linking $LARANJA_REPO -> $TARGET"
+
+# runtime is the one the generated shim imports; core carries the shared
+# contracts it depends on; decorators only matters for Nest projects but is
+# harmless to include.
+node - "$TARGET" "$LARANJA_REPO" <<'NODE'
+const fs = require("node:fs");
+const path = require("node:path");
+const [target, repo] = process.argv.slice(2);
+const pkgPath = path.join(target, "package.json");
+const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+
+pkg.dependencies ??= {};
+for (const [name, dir] of [
+  ["@alzulejos/laranja-runtime", "packages/runtime"],
+  ["@alzulejos/laranja-core", "packages/core"],
+  ["@alzulejos/laranja-decorators", "packages/decorators"],
+]) {
+  pkg.dependencies[name] = `file:${path.join(repo, dir)}`;
+}
+fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
+console.log("  added file: deps for runtime, core, decorators");
+NODE
+
+( cd "$TARGET" && npm install )
+
+# Prove the thing that actually matters: can the shim's import be resolved FROM
+# the project? A silent external is the failure this script exists to prevent.
+if node -e "require.resolve('@alzulejos/laranja-runtime', { paths: ['$TARGET'] })" 2>/dev/null; then
+  echo "✅ @alzulejos/laranja-runtime resolves from $TARGET"
+else
+  echo "❌ @alzulejos/laranja-runtime still does NOT resolve from $TARGET" >&2
+  echo "   The bundler would silently mark it external and the deploy would" >&2
+  echo "   fail at runtime with MODULE_NOT_FOUND." >&2
+  exit 1
+fi

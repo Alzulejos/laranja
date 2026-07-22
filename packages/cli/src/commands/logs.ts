@@ -7,6 +7,7 @@ import { loadConfig, stackName } from "@alzulejos/laranja-core";
 import { note } from "../diagnostics.js";
 import { getAccountId, listStackLambdas, type DeployedLambda, type LambdaKind } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
+import { logsAzure } from "./logs-azure.js";
 import * as ui from "../ui.js";
 
 const EMOJI: Record<LambdaKind, string> = { http: "🌐", cron: "⏰", queue: "📨", lambda: "λ" };
@@ -26,6 +27,12 @@ export interface LogsOptions {
 
 export async function logs(projectDir: string, opts: LogsOptions = {}): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Azure reads logs from Application Insights, not CloudWatch.
+  if (config.provider === "azure") {
+    return logsAzure(projectDir, opts);
+  }
+
   const region = requireRegion(config.region);
   note({ project: config.name, stage: config.stage, region });
   applyAwsEnv({ region, profile: config.profile });

@@ -375,6 +375,84 @@ export async function deleteRoleAssignmentsForPrincipal(
   return removed;
 }
 
+/** One log row from Application Insights. */
+export interface LogRow {
+  timestamp: number;
+  message: string;
+  severity: string;
+}
+
+/**
+ * The Log Analytics workspace's query id (`customerId` — a GUID), needed to
+ * query it. Undefined if the workspace doesn't exist (nothing deployed yet).
+ */
+export async function logAnalyticsWorkspaceId(
+  target: AzureTarget,
+  workspaceName: string,
+): Promise<string | undefined> {
+  const token = await managementToken();
+  const id = resourceId(target, "Microsoft.OperationalInsights", "workspaces", workspaceName);
+  const res = await fetch(`https://management.azure.com${id}?api-version=2022-10-01`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return undefined;
+  const body = (await res.json()) as { properties?: { customerId?: string } };
+  return body.properties?.customerId;
+}
+
+/**
+ * Query the workspace for the app's logs since `sinceMs` ago. Returns rows
+ * oldest-first. `afterTimestamp` (ms) filters to events strictly newer than a
+ * previous poll — how `--follow` avoids reprinting.
+ *
+ * `traces` is where console output and the Functions host logs land; unioned
+ * with `exceptions` so errors show too.
+ */
+export async function queryAppLogs(
+  workspaceId: string,
+  sinceMs: number,
+  afterTimestamp?: number,
+): Promise<LogRow[]> {
+  const token = await azureCredential().getToken("https://api.loganalytics.io/.default");
+  if (!token) throw new Error("Could not acquire a Log Analytics token.");
+
+  const floorIso = new Date(afterTimestamp ?? Date.now() - sinceMs).toISOString();
+  const kql =
+    `union traces, (exceptions | extend message = strcat(type, ': ', outerMessage)) ` +
+    `| where timestamp > datetime(${floorIso}) ` +
+    `| project timestamp, message, severityLevel ` +
+    `| order by timestamp asc | take 500`;
+
+  const res = await fetch(`https://api.loganalytics.io/v1/workspaces/${workspaceId}/query`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token.token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ query: kql }),
+  });
+  if (!res.ok) throw new Error(`Log query failed: ${res.status} ${await res.text()}`);
+
+  const body = (await res.json()) as {
+    tables?: { columns: { name: string }[]; rows: unknown[][] }[];
+  };
+  const table = body.tables?.[0];
+  if (!table) return [];
+
+  const col = (name: string) => table.columns.findIndex((c) => c.name === name);
+  const tsIdx = col("timestamp");
+  const msgIdx = col("message");
+  const sevIdx = col("severityLevel");
+
+  return table.rows.map((r) => ({
+    timestamp: new Date(String(r[tsIdx])).getTime(),
+    message: String(r[msgIdx] ?? ""),
+    severity: severityName(Number(r[sevIdx] ?? 1)),
+  }));
+}
+
+/** App Insights severityLevel (0–4) → a short label. */
+function severityName(level: number): string {
+  return ["verbose", "info", "warn", "error", "critical"][level] ?? "info";
+}
+
 /** True if a resource-group-scoped resource already exists (a 200 GET). */
 export async function azureResourceExists(id: string, apiVersion: string): Promise<boolean> {
   const token = await managementToken();

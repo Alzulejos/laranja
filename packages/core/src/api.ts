@@ -224,13 +224,22 @@ export type SynthResponse =
   | ArmSynthResponse;
 
 /**
- * `200` response from `/diff` — a read-only synth. Same fields as the
- * CloudFormation synth response but with NO `deploymentId` (nothing is
- * persisted). Fields are optional to mirror the server's `Partial<SynthResponse>`.
+ * `200` response from `/diff` — a read-only synth (no `deploymentId`, nothing
+ * persisted). Carries whichever template the provider produces.
+ *
+ * `artifact` says which kind. It's OPTIONAL for back-compat: an older server
+ * that predates this field omits it, and the client treats a missing value as
+ * "cloudformation" (the only thing those servers returned).
  */
-export type DiffResponse = Partial<
-  Pick<CloudFormationSynthResponse, "stackName" | "template" | "assets">
->;
+export interface DiffResponse {
+  artifact?: SynthArtifact;
+  /** CloudFormation stack name (AWS only). */
+  stackName?: string;
+  /** The template to diff — CloudFormation or ARM JSON, per `artifact`. */
+  template?: Record<string, unknown>;
+  /** Per-handler asset map (AWS/CloudFormation only). */
+  assets?: HandlerAsset[];
+}
 
 /* -------------------------------------------------------------------------- */
 /* Deployment reporting (lifecycle)                                           */

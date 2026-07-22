@@ -96,6 +96,48 @@ export async function deployTemplate(args: {
   return flat;
 }
 
+/** One predicted change from ARM what-if, flattened for rendering. */
+export interface PlannedChange {
+  /** Create | Delete | Modify | Deploy | NoChange | Ignore | Unsupported. */
+  changeType: string;
+  /** Short resource label (type/name), derived from the resource id. */
+  resource: string;
+}
+
+/**
+ * Preview a deployment via ARM what-if — the read-only equivalent of an apply.
+ * Returns the predicted per-resource changes without touching anything.
+ */
+export async function azureWhatIf(args: {
+  target: AzureTarget;
+  deploymentName: string;
+  template: Record<string, unknown>;
+  parameters: Record<string, string>;
+}): Promise<PlannedChange[]> {
+  const { target, deploymentName, template, parameters } = args;
+  const client = new DeploymentsClient(azureCredential(), target.subscriptionId);
+
+  const poller = client.deployments.whatIf(target.resourceGroup, deploymentName, {
+    properties: { mode: "Incremental", template, parameters: toArmParameters(parameters) },
+  });
+  const result = await poller.pollUntilDone();
+
+  const changes = result.changes ?? [];
+  return changes.map((c) => ({
+    changeType: c.changeType,
+    resource: shortResource(c.resourceId ?? c.symbolicName ?? "resource"),
+  }));
+}
+
+/** "Microsoft.Web/sites/foo" → "sites/foo" from a full resource id. */
+function shortResource(resourceId: string): string {
+  const i = resourceId.indexOf("/providers/");
+  if (i === -1) return resourceId;
+  const parts = resourceId.slice(i + "/providers/".length).split("/");
+  // [namespace, type, name, (subtype, subname)...] → drop the namespace.
+  return parts.slice(1).join("/");
+}
+
 /** Acquire an ARM management bearer token. */
 export async function managementToken(): Promise<string> {
   const token = await azureCredential().getToken("https://management.azure.com/.default");

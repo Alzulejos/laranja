@@ -238,6 +238,41 @@ export async function buildPlanAssembly(
   return { ir, stackName: res.stackName, cdkOutDir, region, template: res.template };
 }
 
+/**
+ * Server build for an Azure plan: prepare upload -> `/diff` with `artifact:
+ * "arm"` (read-only, NO deployment row) -> hand back the ARM template so the CLI
+ * can run it through ARM what-if against the live resource group.
+ *
+ * No assembly/upload — what-if only needs the template, and plan must never open
+ * a deployment row or upload a package.
+ */
+export async function buildAzurePlanTemplate(
+  projectDir: string,
+  env: BuildEnv,
+  apiKey: string,
+): Promise<{ ir: InfraIR; template: Record<string, unknown> }> {
+  const { projectId, ir, assets } = await prepareUpload(projectDir, env);
+
+  let res;
+  try {
+    res = await postDiff(
+      { project: ir.app.name, stage: ir.app.stage, artifact: "arm", ir, assets },
+      apiKey,
+      projectId,
+    );
+  } catch (err) {
+    if (err instanceof ApiRequestError) throw new Error(apiErrorMessage("Plan failed", err));
+    throw err;
+  }
+  // Back-compat: an older server omits `artifact` and only speaks CloudFormation.
+  if (res.artifact !== "arm" || !res.template) {
+    throw new Error(
+      "The server didn't return an ARM template to preview — `laranja plan` needs an Azure-aware server.",
+    );
+  }
+  return { ir, template: res.template };
+}
+
 export function printPlan(ir: InfraIR): void {
   console.log(
     ir.http

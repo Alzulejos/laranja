@@ -2,6 +2,7 @@ import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
 import { preflightOrAbort } from "../preflight.js";
+import { planAzure } from "./plan-azure.js";
 import { usesWebpackBuilder } from "../nest-build.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
@@ -31,20 +32,14 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   const config = await loadConfig(projectDir, { stage: opts.stage });
 
-  // Azure plan is blocked on ONE thing: `/diff` (the read-only synth) only
-  // returns CloudFormation. ARM `what-if` is the natural equivalent and the SDK
-  // exposes it, but `plan` must not call `/synth` - that opens a deployment row
-  // and counts against quota. Fail clearly rather than with an AWS creds error.
-  if (config.provider === "azure") {
-    throw new Error(
-      "`laranja plan` isn't wired up for Azure yet - the server's read-only synth doesn't\n" +
-        "  return an ARM template, so there's nothing to preview against.",
-    );
-  }
-
   // Verify access before previewing — a read-only preview still needs working
-  // credentials + a region to diff against the live stack.
+  // credentials (and, for AWS, a region to diff against the live stack).
   if (!(await preflightOrAbort(config, "plan"))) return;
+
+  // Azure previews via ARM what-if, not a CloudFormation stack diff.
+  if (config.provider === "azure") {
+    return planAzure(projectDir, { stage: opts.stage });
+  }
 
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });

@@ -133,10 +133,6 @@ export function azureLogWorkspaceName(app: string, stage: string): string {
   return slug([app, stage, "logs"], 63);
 }
 
-/** User-assigned managed identity name — the app's stable runtime identity. */
-export function azureManagedIdentityName(app: string, stage: string): string {
-  return slug([app, stage, "id"], 128);
-}
 
 /**
  * Storage account name — the strictest rule in Azure: 3–24 chars, LOWERCASE

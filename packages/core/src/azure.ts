@@ -128,6 +128,11 @@ export function azureAppInsightsName(app: string, stage: string): string {
   return slug([app, stage, "ai"], 60);
 }
 
+/** Log Analytics workspace name — backs workspace-based App Insights. */
+export function azureLogWorkspaceName(app: string, stage: string): string {
+  return slug([app, stage, "logs"], 63);
+}
+
 /**
  * Storage account name — the strictest rule in Azure: 3–24 chars, LOWERCASE
  * ALPHANUMERIC ONLY (hyphens are rejected), globally unique.

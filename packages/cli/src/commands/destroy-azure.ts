@@ -13,6 +13,7 @@
 import {
   azureAppInsightsName,
   azureFunctionAppName,
+  azureLogWorkspaceName,
   azurePlanName,
   azureStorageAccountName,
   loadConfig,
@@ -48,11 +49,12 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
   const site = azureFunctionAppName(app, stage);
   const plan = azurePlanName(app, stage);
   const insights = azureAppInsightsName(app, stage);
+  const workspace = azureLogWorkspaceName(app, stage);
   const storage = azureStorageAccountName(app, stage);
 
   note({ project: app, stage, ...target, site });
   ui.header(`destroy ${app} ${ui.dim(stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);
-  ui.note(`this will DELETE the function app, plan, storage and insights for "${app}" (${stage}).`);
+  ui.note(`this will DELETE the function app, plan, storage, insights and logs for "${app}" (${stage}).`);
   ui.note(`the resource group "${target.resourceGroup}" itself is left alone.`);
   if (!(await confirm("     are you sure? (y/N)"))) {
     console.log("\n  aborted.\n");
@@ -78,7 +80,9 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     ["Microsoft.Web", "sites", site, "2023-12-01"],
     ["Microsoft.Web", "serverfarms", plan, "2023-12-01"],
     ["Microsoft.Storage", "storageAccounts", storage, "2023-05-01"],
+    // App Insights before its workspace: the component references the workspace.
     ["Microsoft.Insights", "components", insights, "2020-02-02"],
+    ["Microsoft.OperationalInsights", "workspaces", workspace, "2022-10-01"],
   ];
 
   const sp = ui.spinner("tearing down");

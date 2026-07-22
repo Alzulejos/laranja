@@ -3,22 +3,18 @@
  *
  * A sibling of the AWS `deploy`, not a branch inside it: almost nothing is
  * shared below the server build. AWS resolves an account, checks a bootstrap and
- * hands a cloud assembly to the CDK toolkit; Azure submits an ARM deployment and
- * uploads a package. What IS shared stays shared — the scan/bundle/synth front
- * half, and the dashboard lifecycle (STARTED before the cloud → SUCCESS/FAILED).
+ * hands a cloud assembly to the CDK toolkit; Azure submits an ARM deployment then
+ * publishes the package. What IS shared stays shared — the scan/bundle/synth
+ * front half, and the dashboard lifecycle (STARTED before the cloud → outcome).
  *
- * ORDER OF OPERATIONS. The blob container is created BY the template, so the
- * package can't be uploaded first. The sequence is therefore:
- *
- *   deploy template  →  upload package  →  restart app
- *
- * The app comes up empty for a few seconds on a FIRST deploy (nothing to serve
- * yet) and keeps serving the old package on an update until the restart. The
- * alternative — creating storage out-of-band before the template — would mean
- * managing a resource the template doesn't own, which breaks teardown.
+ * ORDER OF OPERATIONS: provision the infra (ARM), THEN publish the code via one
+ * deploy. The template must exist first — it creates the function app that one
+ * deploy publishes into. One deploy (not a blob drop) is the only method Flex
+ * Consumption honours; see `oneDeployPublish`.
  */
 
 import path from "node:path";
+import { mkdirSync, writeFileSync } from "node:fs";
 import {
   armParamName,
   loadConfig,
@@ -29,7 +25,7 @@ import {
   type DeployedResource,
 } from "@alzulejos/laranja-core";
 import { buildAzureAssembly } from "../pipeline.js";
-import { deployTemplate, restartFunctionApp, uploadPackage, zipDir } from "../azure.js";
+import { deployTemplate, oneDeployPublish, zipDir } from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
@@ -91,8 +87,15 @@ export async function deployAzure(
   if (!assetDir) throw new Error(`Internal: no bundled output for handler "${asset.id}".`);
 
   step("zip package");
-  const zipPath = path.join(projectDir, ".laranja", "azure", asset.blobName);
+  const azureDir = path.join(projectDir, ".laranja", "azure");
+  const zipPath = path.join(azureDir, asset.blobName);
   await zipDir(assetDir, zipPath);
+
+  // Write the template to disk so a failed deploy can be inspected / re-validated
+  // with `az deployment group validate --template-file` (the az CLI surfaces the
+  // per-resource errors the SDK swallows).
+  mkdirSync(azureDir, { recursive: true });
+  writeFileSync(path.join(azureDir, "template.json"), JSON.stringify(template, null, 2));
 
   // ARM deployment names are per-group; scoping to app+stage means concurrent
   // stages don't collide, and a redeploy reuses the same name (which is fine —
@@ -113,21 +116,15 @@ export async function deployAzure(
     throw err;
   }
 
-  step("upload package");
-  const up = ui.spinner("uploading app");
+  step("publish package");
+  const up = ui.spinner("publishing app");
   try {
-    await uploadPackage({
-      storageAccount: names.storageAccount,
-      container: names.container,
-      blobName: asset.blobName,
-      zipPath,
-    });
-    // The host only re-reads its package on start, so without this an update
-    // would provision cleanly and still serve the previous code.
-    await restartFunctionApp({ target, functionApp: names.functionApp });
+    // One deploy is the ONLY method Flex Consumption supports — it makes the
+    // package the app's ACTIVE deployment (a dropped blob is ignored).
+    await oneDeployPublish({ functionApp: names.functionApp, zipPath });
     up.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
-    up.fail("upload failed");
+    up.fail("publish failed");
     await reportSafely("report failure", () =>
       patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId),
     );

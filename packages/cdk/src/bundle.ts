@@ -89,6 +89,24 @@ function packageName(spec: string): string {
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
+/**
+ * Resolve a package's install root from a require base. Tries `<name>/package.json`
+ * first, then the bare `<name>` entry — many packages hide package.json behind an
+ * `exports` map (ERR_PACKAGE_PATH_NOT_EXPORTED), so the package.json path alone
+ * misses them. Returns undefined if the package genuinely can't be resolved.
+ */
+function resolvePackageRoot(req: NodeJS.Require, name: string): string | undefined {
+  for (const spec of [`${name}/package.json`, name]) {
+    try {
+      const root = packageRoot(req.resolve(spec), name);
+      if (root) return root;
+    } catch {
+      /* try the next form */
+    }
+  }
+  return undefined;
+}
+
 /** The installed package's root dir, derived from a resolved file inside it. */
 function packageRoot(resolvedFile: string, pkgName: string): string | undefined {
   const needle = path.join("node_modules", ...pkgName.split("/")) + path.sep;
@@ -149,14 +167,33 @@ function copyNativeClosure(natives: Map<string, string>, assetDir: string): void
     const req = createRequire(path.join(root, "noop.js"));
     for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
       if (copied.has(dep)) continue;
-      try {
-        const depRoot = packageRoot(req.resolve(dep.endsWith("/") ? dep : `${dep}/package.json`), dep);
-        if (depRoot) queue.push([dep, depRoot]);
-      } catch {
-        // Doesn't resolve locally -> can't be needed at runtime either.
-      }
+      const depRoot = resolvePackageRoot(req, dep);
+      if (depRoot) queue.push([dep, depRoot]);
+      // Unresolvable -> can't be needed at runtime either (local parity).
     }
   }
+}
+
+/**
+ * Copy one package (resolved from `projectDir`) plus its production dependency
+ * closure into `<assetDir>/node_modules`, reusing the native-closure walker.
+ * Used for `@azure/functions`, which must ship physically because it's external.
+ */
+function copyPackageIntoAssets(name: string, projectDir: string, assetDir: string): void {
+  const resolveFrom = (reqBase: string): string | undefined =>
+    resolvePackageRoot(createRequire(reqBase), name);
+
+  // Try the user's project first, then this bundler's own location — `runtime`
+  // (which the shim imports the registration API from) depends on
+  // @azure/functions, so it's resolvable alongside the bundler in every install
+  // shape. Shipping runtime's exact copy keeps one matching instance.
+  const root = resolveFrom(path.join(projectDir, "noop.js")) ?? resolveFrom(import.meta.url);
+  if (!root) {
+    throw new Error(
+      `Azure deploy needs "${name}", but it couldn't be resolved. Run: npm i ${name}`,
+    );
+  }
+  copyNativeClosure(new Map([[name, root]]), assetDir);
 }
 
 /** A bundled Lambda handler ready to become a CDK asset. */
@@ -252,9 +289,13 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     // a real file — so emit `index.js` there (still CJS, since the generated
     // package.json omits "type"). Lambda is handed `index.cjs` directly.
     ...(isAzure ? {} : { outExtension: { ".js": ".cjs" } }),
-    // The Lambda runtime PROVIDES the AWS SDK, so excluding it keeps zips small.
-    // Nothing provides it on Azure: anything imported must be in the bundle.
-    external: isAzure ? [] : ["@aws-sdk/*", "aws-sdk"],
+    // AWS: the Lambda runtime PROVIDES the AWS SDK, so exclude it.
+    // Azure: @azure/functions MUST NOT be bundled. The Functions host registers
+    // functions through ITS module instance; a bundled copy has a private
+    // registry the host can't see, so app.http() calls vanish and the host finds
+    // zero functions (the "up and running" default page). It stays external and
+    // is shipped in node_modules below.
+    external: isAzure ? ["@azure/functions"] : ["@aws-sdk/*", "aws-sdk"],
     plugins: [localParityPlugin(opts.projectDir, natives)],
     logLevel: "warning",
   });
@@ -266,6 +307,10 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     // Azure packages are a project the host inspects, not a bare file.
     if (isAzure) {
       writeAzurePackageFiles(assetDir, opts.httpTimeoutSeconds ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
+      // @azure/functions is external (see above), so it must physically exist in
+      // the package's node_modules for the host to load the SAME instance the
+      // shim registered against. Copy it plus its production closure.
+      copyPackageIntoAssets("@azure/functions", opts.projectDir, assetDir);
     }
     return {
       id: e.id,

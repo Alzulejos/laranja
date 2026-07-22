@@ -46,6 +46,16 @@ export function buildAzureHostJson(timeoutSeconds: number): Record<string, unkno
   return {
     version: "2.0",
     functionTimeout: toHhMmSs(timeoutSeconds),
+    extensions: {
+      http: {
+        // Azure prefixes HTTP routes with "/api" by default. laranja serves a
+        // whole app at root, and the shim forwards the incoming path straight to
+        // the framework — so an "/api" prefix would forward "/api/foo" to an app
+        // that only knows "/foo". Drop the prefix: routes sit at root and the
+        // forwarded path matches what the user's app declared.
+        routePrefix: "",
+      },
+    },
     extensionBundle: {
       id: "Microsoft.Azure.Functions.ExtensionBundle",
       // Flex Consumption requires this bundle range for non-C# apps.

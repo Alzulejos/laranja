@@ -104,9 +104,10 @@ export async function deployAzure(
 
   step("arm deployment");
   const sp = ui.spinner("provisioning");
-  let outputs: Record<string, string>;
   try {
-    outputs = await deployTemplate({ target, deploymentName, template, parameters });
+    // Outputs are ignored — the URL is derived deterministically from the app
+    // name (Azure lowercases output keys, so reading them back is unreliable).
+    await deployTemplate({ target, deploymentName, template, parameters });
     sp.succeed("provisioned");
   } catch (err) {
     sp.fail("provisioning failed");
@@ -132,13 +133,12 @@ export async function deployAzure(
   }
 
   console.log();
-  if (outputs.HttpUrl) ui.step("🌐", "http", outputs.HttpUrl);
+  ui.step("🌐", "http", azureFunctionUrl(names.functionApp));
 
   step("report success");
   const resources = buildAzureResources({
     name: names.functionApp,
     target,
-    outputs,
     missingEnv: missing,
   });
   await reportSafely("report success", () =>
@@ -166,13 +166,22 @@ export async function deployAzure(
  * AWS equivalent reads it from CloudFormation first) — over-reporting CREATED is
  * more honest than guessing UPDATED.
  */
+/**
+ * A Flex Consumption function app's public URL. Deterministic from the app name
+ * (`https://<name>.azurewebsites.net`), so it doesn't depend on the ARM
+ * deployment outputs — whose keys Azure returns lowercased, which is why reading
+ * `outputs.HttpUrl` came back empty and the dashboard fell back to the resource id.
+ */
+function azureFunctionUrl(functionApp: string): string {
+  return `https://${functionApp}.azurewebsites.net`;
+}
+
 function buildAzureResources(args: {
   name: string;
   target: { subscriptionId: string; resourceGroup: string };
-  outputs: Record<string, string>;
   missingEnv: string[];
 }): DeployedResource[] {
-  const { name, target, outputs, missingEnv } = args;
+  const { name, target, missingEnv } = args;
   return [
     {
       // "http" is the logical name the AWS path uses for the proxy; keeping it
@@ -185,7 +194,7 @@ function buildAzureResources(args: {
       externalId:
         `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}` +
         `/providers/Microsoft.Web/sites/${name}`,
-      externalUrl: outputs.HttpUrl ?? null,
+      externalUrl: azureFunctionUrl(name),
     },
   ];
 }

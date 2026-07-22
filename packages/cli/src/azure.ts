@@ -97,7 +97,7 @@ export async function deployTemplate(args: {
 }
 
 /** Acquire an ARM management bearer token. */
-async function managementToken(): Promise<string> {
+export async function managementToken(): Promise<string> {
   const token = await azureCredential().getToken("https://management.azure.com/.default");
   if (!token) throw new Error("Could not acquire an Azure management token.");
   return token.token;

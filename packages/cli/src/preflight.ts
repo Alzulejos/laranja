@@ -19,6 +19,15 @@ import * as ui from "./ui.js";
 
 type CheckStatus = "ok" | "fail" | "unknown";
 
+/**
+ * What the caller is about to do. The right-access checks differ:
+ * - deploy needs providers registered + the resource group present;
+ * - destroy only needs credentials (deleting doesn't care about registration,
+ *   and a missing group just means nothing to tear down);
+ * - plan is a read-only preview — credentials + region.
+ */
+export type PreflightPurpose = "deploy" | "plan" | "destroy";
+
 interface CheckResult {
   status: CheckStatus;
   label: string;
@@ -40,12 +49,15 @@ const AZURE_PROVIDERS = [
  * value, but is reported distinctly so a flaky network reads as "couldn't check"
  * rather than "broken").
  */
-export async function runPreflight(config: LaranjaConfig): Promise<boolean> {
+export async function runPreflight(
+  config: LaranjaConfig,
+  purpose: PreflightPurpose = "deploy",
+): Promise<boolean> {
   const provider = config.provider ?? "aws";
   ui.header(`preflight · ${provider}`);
 
   const checks =
-    provider === "azure" ? await azureChecks(config) : await awsChecks(config);
+    provider === "azure" ? await azureChecks(config, purpose) : await awsChecks(config);
 
   for (const c of checks) {
     const icon = c.status === "ok" ? ui.green("✓") : c.status === "fail" ? ui.red("✗") : ui.dim("?");
@@ -59,6 +71,18 @@ export async function runPreflight(config: LaranjaConfig): Promise<boolean> {
     console.log(`  ${ui.green("✓")} ${ui.bold("environment ready")}\n`);
   }
   return allOk;
+}
+
+/**
+ * Run the preflight and, on failure, print the abort line. Returns whether it's
+ * safe to proceed. The single gate every command calls right after loading
+ * config, before doing any cloud work — so a missing permission or setup step is
+ * caught up front with a fix, not mid-operation where it looks like laranja broke.
+ */
+export async function preflightOrAbort(config: LaranjaConfig, purpose: PreflightPurpose): Promise<boolean> {
+  const ok = await runPreflight(config, purpose);
+  if (!ok) ui.warn("environment isn't ready — fix the items above and re-run.");
+  return ok;
 }
 
 async function awsChecks(config: LaranjaConfig): Promise<CheckResult[]> {
@@ -88,7 +112,7 @@ async function awsChecks(config: LaranjaConfig): Promise<CheckResult[]> {
   return checks;
 }
 
-async function azureChecks(config: LaranjaConfig): Promise<CheckResult[]> {
+async function azureChecks(config: LaranjaConfig, purpose: PreflightPurpose): Promise<CheckResult[]> {
   const checks: CheckResult[] = [];
   const sub = config.azure?.subscriptionId;
   const rg = config.azure?.resourceGroup;
@@ -121,34 +145,42 @@ async function azureChecks(config: LaranjaConfig): Promise<CheckResult[]> {
   // Without a token + subscription, the live checks below can't run.
   if (!token || !sub) return checks;
 
-  // 3. Resource providers registered — an unregistered one fails mid-deploy
-  //    with a "Failed to register resource provider" Conflict.
-  for (const ns of AZURE_PROVIDERS) {
-    const state = await azureProviderState(token, sub, ns);
-    if (state === "Registered") {
-      checks.push({ status: "ok", label: `provider ${ns} registered` });
-    } else if (state === undefined) {
-      checks.push({ status: "unknown", label: `provider ${ns} — couldn't check` });
-    } else {
-      checks.push({
-        status: "fail",
-        label: `provider ${ns} is ${state}`,
-        fix: `az provider register --namespace ${ns}`,
-      });
+  // 3. Resource providers registered — an unregistered one fails a DEPLOY
+  //    mid-flight with a "Failed to register resource provider" Conflict.
+  //    Irrelevant to destroy (deleting doesn't register anything) and plan.
+  if (purpose === "deploy") {
+    for (const ns of AZURE_PROVIDERS) {
+      const state = await azureProviderState(token, sub, ns);
+      if (state === "Registered") {
+        checks.push({ status: "ok", label: `provider ${ns} registered` });
+      } else if (state === undefined) {
+        checks.push({ status: "unknown", label: `provider ${ns} — couldn't check` });
+      } else {
+        checks.push({
+          status: "fail",
+          label: `provider ${ns} is ${state}`,
+          fix: `az provider register --namespace ${ns}`,
+        });
+      }
     }
   }
 
-  // 4. Resource group exists (and report its region — the deploy inherits it).
+  // 4. Resource group. A DEPLOY needs it to exist (it inherits its region); a
+  //    destroy that finds it gone just has nothing to do, so that's informational.
   if (rg) {
     const location = await azureResourceGroupLocation(token, sub, rg);
     if (location) {
       checks.push({ status: "ok", label: `resource group exists (${rg} · ${location})` });
     } else if (location === null) {
-      checks.push({
-        status: "fail",
-        label: `resource group "${rg}" not found`,
-        fix: `az group create -n ${rg} -l westus2   (laranja deploys into an existing group)`,
-      });
+      checks.push(
+        purpose === "deploy"
+          ? {
+              status: "fail",
+              label: `resource group "${rg}" not found`,
+              fix: `Create it: az group create -n ${rg} -l <region>   (laranja deploys into an existing group).`,
+            }
+          : { status: "ok", label: `resource group "${rg}" already gone — nothing to destroy` },
+      );
     } else {
       checks.push({ status: "unknown", label: `resource group "${rg}" — couldn't check` });
     }

@@ -12,6 +12,7 @@ import {
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
 import { deployAzure } from "./deploy-azure.js";
+import { preflightOrAbort } from "../preflight.js";
 import { getAccountId, getStackSnapshot, isBootstrapped } from "../aws.js";
 import { buildDeployedResources } from "../report.js";
 import { reportSafely } from "../lifecycle.js";
@@ -37,6 +38,12 @@ export async function deploy(
   // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Verify the user's cloud environment (credentials, providers, resource group)
+  // BEFORE any work — covers both providers, so a missing permission or setup
+  // step fails here with a fix, not mid-deploy where it reads as a laranja bug.
+  step("preflight");
+  if (!(await preflightOrAbort(config, "deploy"))) return;
 
   // Dispatch on provider BEFORE anything AWS-specific - account resolution,
   // bootstrap and the CDK toolkit below are all AWS-only concepts.

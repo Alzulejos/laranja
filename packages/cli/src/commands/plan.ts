@@ -1,6 +1,7 @@
 import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
+import { preflightOrAbort } from "../preflight.js";
 import { usesWebpackBuilder } from "../nest-build.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
@@ -40,6 +41,10 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
         "  return an ARM template, so there's nothing to preview against.",
     );
   }
+
+  // Verify access before previewing — a read-only preview still needs working
+  // credentials + a region to diff against the live stack.
+  if (!(await preflightOrAbort(config, "plan"))) return;
 
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });

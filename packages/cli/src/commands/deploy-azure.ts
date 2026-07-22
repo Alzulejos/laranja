@@ -26,7 +26,6 @@ import {
 } from "@alzulejos/laranja-core";
 import { buildAzureAssembly } from "../pipeline.js";
 import { deployTemplate, oneDeployPublish, zipDir } from "../azure.js";
-import { runPreflight } from "../preflight.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
@@ -53,16 +52,6 @@ export async function deployAzure(
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);
   ui.step("🔑", "subscription", target.subscriptionId);
-
-  // Check the environment BEFORE building/synthesizing anything — an
-  // unregistered provider, a missing resource group, or absent credentials all
-  // fail the deploy mid-flight otherwise, reading as a laranja bug. Abort with the
-  // fix list instead of doing work that's doomed.
-  step("preflight");
-  if (!(await runPreflight(config))) {
-    ui.warn("environment isn't ready — fix the items above and re-run.");
-    return;
-  }
 
   step("server build (scan/bundle/synth)");
   const built = await buildAzureAssembly(projectDir, { stage: opts.stage }, apiKey);

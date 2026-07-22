@@ -375,6 +375,15 @@ export async function deleteRoleAssignmentsForPrincipal(
   return removed;
 }
 
+/** True if a resource-group-scoped resource already exists (a 200 GET). */
+export async function azureResourceExists(id: string, apiVersion: string): Promise<boolean> {
+  const token = await managementToken();
+  const res = await fetch(`https://management.azure.com${id}?api-version=${apiVersion}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  return res.ok;
+}
+
 /** Build a full resource id for a resource-group-scoped resource. */
 export function resourceId(
   target: AzureTarget,

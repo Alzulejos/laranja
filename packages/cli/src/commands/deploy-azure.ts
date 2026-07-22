@@ -25,7 +25,7 @@ import {
   type DeployedResource,
 } from "@alzulejos/laranja-core";
 import { buildAzureAssembly } from "../pipeline.js";
-import { deployTemplate, oneDeployPublish, zipDir } from "../azure.js";
+import { azureResourceExists, deployTemplate, oneDeployPublish, resourceId, zipDir } from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
@@ -102,6 +102,13 @@ export async function deployAzure(
   // ARM treats it as a new revision).
   const deploymentName = `laranja-${config.name}-${config.stage}`;
 
+  // Whether the function app already exists decides CREATED vs UPDATED in the
+  // report — checked BEFORE provisioning, while the answer is still meaningful.
+  const alreadyExists = await azureResourceExists(
+    resourceId(target, "Microsoft.Web", "sites", names.functionApp),
+    "2023-12-01",
+  );
+
   step("arm deployment");
   const sp = ui.spinner("provisioning");
   try {
@@ -140,6 +147,7 @@ export async function deployAzure(
     name: names.functionApp,
     target,
     missingEnv: missing,
+    action: alreadyExists ? "UPDATED" : "CREATED",
   });
   await reportSafely("report success", () =>
     patchDeployment(deploymentId, { status: "SUCCESS" }, apiKey, projectId),
@@ -159,14 +167,6 @@ export async function deployAzure(
 }
 
 /**
- * The dashboard inventory for an Azure deploy.
- *
- * Scoped to what v1 creates: one function app serving HTTP. Everything is
- * reported CREATED because there's no prior-state snapshot on this path yet (the
- * AWS equivalent reads it from CloudFormation first) — over-reporting CREATED is
- * more honest than guessing UPDATED.
- */
-/**
  * A Flex Consumption function app's public URL. Deterministic from the app name
  * (`https://<name>.azurewebsites.net`), so it doesn't depend on the ARM
  * deployment outputs — whose keys Azure returns lowercased, which is why reading
@@ -176,19 +176,25 @@ function azureFunctionUrl(functionApp: string): string {
   return `https://${functionApp}.azurewebsites.net`;
 }
 
+/**
+ * The dashboard inventory for an Azure deploy — one function app serving HTTP.
+ * `action` is CREATED or UPDATED depending on whether the app existed before
+ * this deploy (checked by the caller); v1 has no REMOVED path.
+ */
 function buildAzureResources(args: {
   name: string;
   target: { subscriptionId: string; resourceGroup: string };
   missingEnv: string[];
+  action: "CREATED" | "UPDATED";
 }): DeployedResource[] {
-  const { name, target, missingEnv } = args;
+  const { name, target, missingEnv, action } = args;
   return [
     {
       // "http" is the logical name the AWS path uses for the proxy; keeping it
       // means the dashboard renders an Azure deploy the same way.
       name: "http",
       type: "http",
-      action: "CREATED",
+      action,
       metadata: missingEnv.length ? { warnings: [`env with no value: ${missingEnv.join(", ")}`] } : {},
       // Azure's stable identifier is the full resource id — the ARN analogue.
       externalId:

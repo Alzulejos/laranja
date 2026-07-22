@@ -14,6 +14,7 @@ import {
   azureAppInsightsName,
   azureFunctionAppName,
   azureLogWorkspaceName,
+  azureManagedIdentityName,
   azurePlanName,
   azureStorageAccountName,
   loadConfig,
@@ -24,7 +25,7 @@ import {
 import {
   deleteResourceById,
   deleteRoleAssignmentsForPrincipal,
-  functionAppPrincipalId,
+  managedIdentityPrincipalId,
   resourceId,
 } from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
@@ -56,10 +57,11 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
   const insights = azureAppInsightsName(app, stage);
   const workspace = azureLogWorkspaceName(app, stage);
   const storage = azureStorageAccountName(app, stage);
+  const identity = azureManagedIdentityName(app, stage);
 
   note({ project: app, stage, ...target, site });
   ui.header(`destroy ${app} ${ui.dim(stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);
-  ui.note(`this will DELETE the function app, plan, storage, insights and logs for "${app}" (${stage}).`);
+  ui.note(`this will DELETE the function app, plan, storage, insights, logs and identity for "${app}" (${stage}).`);
   ui.note(`the resource group "${target.resourceGroup}" itself is left alone.`);
   if (!(await confirm("     are you sure? (y/N)"))) {
     console.log("\n  aborted.\n");
@@ -79,10 +81,10 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     patchDeployment(deploymentId, { status: "STARTED", region: target.resourceGroup }, apiKey, projectId),
   );
 
-  // Capture the app's identity BEFORE deleting it — its role assignments are
-  // named with ARM guids we can't reproduce, so they're found by principal, and
-  // the principal is only readable while the app still exists.
-  const principalId = await functionAppPrincipalId(target, site);
+  // Capture the identity's principal BEFORE deleting it — the role assignments
+  // are keyed to it (their names are ARM guids we can't reproduce), and the
+  // principal is only readable while the identity still exists.
+  const principalId = await managedIdentityPrincipalId(target, identity);
 
   // Order matters: the app first (it holds the plan and reads the storage), then
   // its dependencies. Each returns false if already gone, so a re-run is safe.
@@ -93,6 +95,7 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     // App Insights before its workspace: the component references the workspace.
     ["Microsoft.Insights", "components", insights, "2020-02-02"],
     ["Microsoft.OperationalInsights", "workspaces", workspace, "2022-10-01"],
+    ["Microsoft.ManagedIdentity", "userAssignedIdentities", identity, "2023-01-31"],
   ];
 
   const sp = ui.spinner("tearing down");

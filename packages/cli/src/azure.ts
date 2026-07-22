@@ -321,24 +321,24 @@ export async function deleteResourceById(id: string, apiVersion: string): Promis
   return true;
 }
 
+
 /**
- * The function app's system-assigned identity principalId, or undefined if the
- * app is already gone. Read BEFORE the app is deleted, so its role assignments
- * can be cleaned up (their names are ARM-computed guids we can't reproduce, so
- * we find them by principal instead).
+ * A user-assigned identity's principalId, or undefined if it's already gone.
+ * Read BEFORE deleting the identity so its role assignments (keyed to this
+ * principal) can be cleaned up.
  */
-export async function functionAppPrincipalId(
+export async function managedIdentityPrincipalId(
   target: AzureTarget,
-  functionApp: string,
+  identityName: string,
 ): Promise<string | undefined> {
   const token = await managementToken();
-  const id = resourceId(target, "Microsoft.Web", "sites", functionApp);
-  const res = await fetch(`https://management.azure.com${id}?api-version=2023-12-01`, {
+  const id = resourceId(target, "Microsoft.ManagedIdentity", "userAssignedIdentities", identityName);
+  const res = await fetch(`https://management.azure.com${id}?api-version=2023-01-31`, {
     headers: { Authorization: `Bearer ${token}` },
   });
   if (!res.ok) return undefined;
-  const body = (await res.json()) as { identity?: { principalId?: string } };
-  return body.identity?.principalId;
+  const body = (await res.json()) as { properties?: { principalId?: string } };
+  return body.properties?.principalId;
 }
 
 /**

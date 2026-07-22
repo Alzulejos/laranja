@@ -273,6 +273,21 @@ export async function buildAzurePlanTemplate(
   return { ir, template: res.template };
 }
 
+/**
+ * Build the Azure deployment PACKAGE locally for eject — scan + bundle, no server
+ * call and no deployment row. Returns the IR and the bundled asset directory the
+ * caller zips into the ejected project.
+ */
+export async function buildAzureEjectPackage(
+  projectDir: string,
+  env: BuildEnv,
+): Promise<{ ir: InfraIR; assetDir: string }> {
+  const { ir, handlers } = await prepareUpload(projectDir, env);
+  const http = handlers.find((h) => h.id === "http");
+  if (!http) throw new Error("Internal: no http handler bundled for eject.");
+  return { ir, assetDir: http.assetDir };
+}
+
 export function printPlan(ir: InfraIR): void {
   console.log(
     ir.http

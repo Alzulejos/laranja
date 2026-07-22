@@ -6,6 +6,7 @@ import { generateEntries } from "@alzulejos/laranja-runtime";
 import { writeResourceTypes } from "../resource-types.js";
 import { resolveNestCompiledEntry } from "../nest-build.js";
 import { note } from "../diagnostics.js";
+import { ejectAzure } from "./eject-azure.js";
 
 /**
  * Generate a standalone, owned CDK project. The project is synthesized on the
@@ -15,6 +16,12 @@ import { note } from "../diagnostics.js";
 export async function eject(projectDir: string, opts: { force?: boolean; stage?: string }): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
   note({ project: config.name, stage: config.stage });
+
+  // Azure ejects an ARM + az-only project, not a CDK one.
+  if (config.provider === "azure") {
+    return ejectAzure(projectDir, opts);
+  }
+
   if (!config.projectId) {
     throw new Error('Set "projectId" in laranja.config.ts (from your dashboard) to eject.');
   }

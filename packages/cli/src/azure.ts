@@ -417,10 +417,14 @@ export async function queryAppLogs(
   if (!token) throw new Error("Could not acquire a Log Analytics token.");
 
   const floorIso = new Date(afterTimestamp ?? Date.now() - sinceMs).toISOString();
+  // Workspace-based App Insights stores telemetry under `App*` tables with
+  // PascalCase columns (NOT the classic `traces`/`timestamp`). AppTraces holds
+  // console output + Functions host logs; alias the columns to what the parser
+  // below reads. Exceptions also surface here at error severity.
   const kql =
-    `union traces, (exceptions | extend message = strcat(type, ': ', outerMessage)) ` +
-    `| where timestamp > datetime(${floorIso}) ` +
-    `| project timestamp, message, severityLevel ` +
+    `AppTraces ` +
+    `| where TimeGenerated > datetime(${floorIso}) ` +
+    `| project timestamp = TimeGenerated, message = Message, severityLevel = SeverityLevel ` +
     `| order by timestamp asc | take 500`;
 
   const res = await fetch(`https://api.loganalytics.io/v1/workspaces/${workspaceId}/query`, {

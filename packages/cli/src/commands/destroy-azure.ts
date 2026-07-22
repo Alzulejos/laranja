@@ -21,7 +21,12 @@ import {
   postDestroy,
   resolveApiKey,
 } from "@alzulejos/laranja-core";
-import { deleteResourceById, resourceId } from "../azure.js";
+import {
+  deleteResourceById,
+  deleteRoleAssignmentsForPrincipal,
+  functionAppPrincipalId,
+  resourceId,
+} from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import { confirm } from "../io.js";
@@ -74,6 +79,11 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     patchDeployment(deploymentId, { status: "STARTED", region: target.resourceGroup }, apiKey, projectId),
   );
 
+  // Capture the app's identity BEFORE deleting it — its role assignments are
+  // named with ARM guids we can't reproduce, so they're found by principal, and
+  // the principal is only readable while the app still exists.
+  const principalId = await functionAppPrincipalId(target, site);
+
   // Order matters: the app first (it holds the plan and reads the storage), then
   // its dependencies. Each returns false if already gone, so a re-run is safe.
   const targets: [string, string, string, string][] = [
@@ -92,7 +102,13 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
       const existed = await deleteResourceById(resourceId(target, provider, type, name), apiVersion);
       if (existed) removed.push(name);
     }
-    sp.succeed(removed.length ? `destroyed ${removed.length} resource(s)` : "nothing to destroy");
+    // Clean up the RBAC grants — deleting the storage account doesn't cascade
+    // them, so they'd otherwise linger as orphans referencing a deleted identity.
+    if (principalId) {
+      const n = await deleteRoleAssignmentsForPrincipal(target, principalId);
+      if (n) removed.push(`${n} role assignment(s)`);
+    }
+    sp.succeed(removed.length ? `destroyed ${removed.length} item(s)` : "nothing to destroy");
   } catch (err) {
     sp.fail("destroy failed");
     await reportSafely("report failure", () =>

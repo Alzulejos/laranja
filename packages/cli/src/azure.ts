@@ -321,6 +321,60 @@ export async function deleteResourceById(id: string, apiVersion: string): Promis
   return true;
 }
 
+/**
+ * The function app's system-assigned identity principalId, or undefined if the
+ * app is already gone. Read BEFORE the app is deleted, so its role assignments
+ * can be cleaned up (their names are ARM-computed guids we can't reproduce, so
+ * we find them by principal instead).
+ */
+export async function functionAppPrincipalId(
+  target: AzureTarget,
+  functionApp: string,
+): Promise<string | undefined> {
+  const token = await managementToken();
+  const id = resourceId(target, "Microsoft.Web", "sites", functionApp);
+  const res = await fetch(`https://management.azure.com${id}?api-version=2023-12-01`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return undefined;
+  const body = (await res.json()) as { identity?: { principalId?: string } };
+  return body.identity?.principalId;
+}
+
+/**
+ * Delete every role assignment in the resource group granted to `principalId`.
+ *
+ * Deleting the storage account does NOT reliably cascade its role assignments —
+ * they linger as orphans referencing a now-deleted identity. So teardown removes
+ * them explicitly, found by principal (the only handle we have, since the names
+ * are ARM guids). Returns how many were removed.
+ */
+export async function deleteRoleAssignmentsForPrincipal(
+  target: AzureTarget,
+  principalId: string,
+): Promise<number> {
+  const token = await managementToken();
+  const scope = `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}`;
+  const filter = encodeURIComponent(`principalId eq '${principalId}'`);
+  const listUrl =
+    `https://management.azure.com${scope}` +
+    `/providers/Microsoft.Authorization/roleAssignments?api-version=2022-04-01&$filter=${filter}`;
+
+  const res = await fetch(listUrl, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return 0;
+  const body = (await res.json()) as { value?: { id: string }[] };
+
+  let removed = 0;
+  for (const a of body.value ?? []) {
+    const del = await fetch(`https://management.azure.com${a.id}?api-version=2022-04-01`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (del.ok) removed++;
+  }
+  return removed;
+}
+
 /** Build a full resource id for a resource-group-scoped resource. */
 export function resourceId(
   target: AzureTarget,

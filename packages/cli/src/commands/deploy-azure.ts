@@ -22,7 +22,6 @@ import {
   postDeploymentResources,
   resolveApiKey,
   resolveDeclaredEnv,
-  type DeployedResource,
 } from "@alzulejos/laranja-core";
 import { buildAzureAssembly } from "../pipeline.js";
 import {
@@ -35,6 +34,7 @@ import {
   zipDir,
 } from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
+import { azureFunctionUrl, buildAzureResources, printAzureFunctions } from "../azure-summary.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
 
@@ -65,7 +65,12 @@ export async function deployAzure(
   const built = await buildAzureAssembly(projectDir, { stage: opts.stage }, apiKey);
   const { ir, template, assets, names, warnings, assetDirsById, deploymentId, projectId } = built;
   note({ deploymentId, functionApp: names.functionApp });
-  ui.step("📦", "server build", `${ir.http?.routes.length ?? 0} routes → 1 function app`);
+  const cronNote = ir.crons.length ? `, ${ir.crons.length} cron${ir.crons.length === 1 ? "" : "s"}` : "";
+  ui.step("📦", "server build", `${ir.http?.routes.length ?? 0} routes${cronNote} → 1 function app`);
+
+  // Crons on Azure are timer functions on the app, not ARM resources — so list
+  // them from the IR or they'd be invisible in the (infrastructure-only) output.
+  printAzureFunctions(ir);
 
   // Surface anything the mapping had to change (memory snapped to an instance
   // size, instance count clamped) — silently altering what was asked for is the
@@ -177,6 +182,7 @@ export async function deployAzure(
   const resources = buildAzureResources({
     name: names.functionApp,
     target,
+    crons: ir.crons,
     missingEnv: missing,
     action: alreadyExists ? "UPDATED" : "CREATED",
   });
@@ -195,43 +201,4 @@ export async function deployAzure(
   }
 
   console.log(`\n  ${ui.orange("✨ live")}\n`);
-}
-
-/**
- * A Flex Consumption function app's public URL. Deterministic from the app name
- * (`https://<name>.azurewebsites.net`), so it doesn't depend on the ARM
- * deployment outputs — whose keys Azure returns lowercased, which is why reading
- * `outputs.HttpUrl` came back empty and the dashboard fell back to the resource id.
- */
-function azureFunctionUrl(functionApp: string): string {
-  return `https://${functionApp}.azurewebsites.net`;
-}
-
-/**
- * The dashboard inventory for an Azure deploy — one function app serving HTTP.
- * `action` is CREATED or UPDATED depending on whether the app existed before
- * this deploy (checked by the caller); v1 has no REMOVED path.
- */
-function buildAzureResources(args: {
-  name: string;
-  target: { subscriptionId: string; resourceGroup: string };
-  missingEnv: string[];
-  action: "CREATED" | "UPDATED";
-}): DeployedResource[] {
-  const { name, target, missingEnv, action } = args;
-  return [
-    {
-      // "http" is the logical name the AWS path uses for the proxy; keeping it
-      // means the dashboard renders an Azure deploy the same way.
-      name: "http",
-      type: "http",
-      action,
-      metadata: missingEnv.length ? { warnings: [`env with no value: ${missingEnv.join(", ")}`] } : {},
-      // Azure's stable identifier is the full resource id — the ARN analogue.
-      externalId:
-        `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}` +
-        `/providers/Microsoft.Web/sites/${name}`,
-      externalUrl: azureFunctionUrl(name),
-    },
-  ];
 }

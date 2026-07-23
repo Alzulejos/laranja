@@ -169,15 +169,33 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
             `  Deploy to AWS (provider: "aws") for now; Azure + NestJS is the next step.`,
         );
       }
+      // Azure hosts EVERY function in ONE package: the HTTP proxy plus each cron's
+      // timer all register (as side effects) from this single entry, and the host
+      // discovers them by loading it. So crons are folded in here rather than
+      // emitted as separate entries — which is also why the cron loop below skips
+      // Azure and the whole app keeps one asset (keyed "http") end to end.
+      const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
+      userImports.set(appImport, appImport);
+      const runtimeImports = new Set<string>(["registerAzureHttp"]);
+      const registrations = [`registerAzureHttp(${local});`];
+      for (const cron of ir.crons) {
+        // workersId (Nest method) crons are rejected upstream; these are standalone.
+        const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
+        const { importLine, factoryArgs } = handlerWiring(cron, spec);
+        // Dedupe: several methods on one class share a single class import.
+        userImports.set(importLine, importLine);
+        runtimeImports.add("registerAzureCron");
+        registrations.push(`registerAzureCron(${JSON.stringify(cron.id)}, ${factoryArgs});`);
+      }
       entries.push({
         id: "http",
         kind: "http",
         fileName: "http.ts",
         handlerExport: "",
-        contents: `${appImport}
-import { registerAzureHttp } from "@alzulejos/laranja-runtime";
+        contents: `${[...userImports.keys()].join("\n")}
+import { ${[...runtimeImports].join(", ")} } from "@alzulejos/laranja-runtime";
 
-registerAzureHttp(${local});
+${registrations.join("\n")}
 `,
       });
     } else {
@@ -214,7 +232,10 @@ export const handler = ${factory}(${local});
 
   // Cron: one Lambda per STANDALONE @Cron / cron() (Express classes, or function-
   // style). Grouped Nest crons are hosted by their worker Lambda above.
+  // Azure has no per-cron entry — its crons are folded into the one app package
+  // in the http branch above — so this AWS-shaped loop skips them.
   for (const cron of ir.crons) {
+    if (ir.app.provider === "azure") break;
     if (isGrouped(cron)) continue;
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
     const { importLine, factoryArgs } = handlerWiring(cron, spec);

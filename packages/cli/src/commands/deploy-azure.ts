@@ -111,13 +111,22 @@ export async function deployAzure(
   step("zip package");
   const azureDir = path.join(projectDir, ".laranja", "azure");
   const zipPath = path.join(azureDir, asset.blobName);
-  await zipDir(assetDir, zipPath);
+  try {
+    await zipDir(assetDir, zipPath);
 
-  // Write the template to disk so a failed deploy can be inspected / re-validated
-  // with `az deployment group validate --template-file` (the az CLI surfaces the
-  // per-resource errors the SDK swallows).
-  mkdirSync(azureDir, { recursive: true });
-  writeFileSync(path.join(azureDir, "template.json"), JSON.stringify(template, null, 2));
+    // Write the template to disk so a failed deploy can be inspected / re-validated
+    // with `az deployment group validate --template-file` (the az CLI surfaces the
+    // per-resource errors the SDK swallows).
+    mkdirSync(azureDir, { recursive: true });
+    writeFileSync(path.join(azureDir, "template.json"), JSON.stringify(template, null, 2));
+  } catch (err) {
+    // STARTED has already been reported; without this the row would orphan at
+    // STARTED if packaging throws before the arm deployment step.
+    await reportSafely("report failure", () =>
+      patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId),
+    );
+    throw err;
+  }
 
   // ARM deployment names are per-group; scoping to app+stage means concurrent
   // stages don't collide, and a redeploy reuses the same name (which is fine —

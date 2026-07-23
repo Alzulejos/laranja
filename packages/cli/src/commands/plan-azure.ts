@@ -19,6 +19,7 @@ import {
 } from "@alzulejos/laranja-core";
 import { buildAzurePlanTemplate } from "../pipeline.js";
 import { azureWhatIf, type PlannedChange } from "../azure.js";
+import { printAzureFunctions } from "../azure-summary.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
 
@@ -41,6 +42,10 @@ export async function planAzure(projectDir: string, opts: { stage?: string } = {
 
   step("server build (scan/diff)");
   const { ir, template } = await buildAzurePlanTemplate(projectDir, { stage: opts.stage }, apiKey);
+
+  // Crons on Azure are app settings on the function app, not ARM resources, so
+  // what-if below can't name them — list the app's functions from the IR first.
+  printAzureFunctions(ir);
 
   // Same env resolution as deploy — what-if needs the parameters to diff an
   // accurate picture (an unset secret would otherwise read as a change).

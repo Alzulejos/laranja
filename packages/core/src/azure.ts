@@ -19,6 +19,25 @@
 export const AZURE_HTTP_FUNCTION_NAME = "api";
 
 /**
+ * App-settings key holding a cron's NCRONTAB schedule.
+ *
+ * JOINT CONTRACT across three halves that never import one another: laranja-cdk
+ * (writes the app setting to the NCRONTAB string), the generated shim in
+ * `@alzulejos/laranja-runtime` (binds its timer with `schedule: '%<this key>%'`),
+ * and the Functions host (expands `%…%` from app settings at trigger time). All
+ * must derive the same key from the cron id.
+ *
+ * ⚠️ laranja-cdk carries a value-identical copy (`cronScheduleSettingKey`) for the
+ * same published-tarball reason the naming helpers below do — change both together.
+ *
+ * Linux Function App setting names are case-sensitive, so the id's case is
+ * preserved; only non-alphanumerics fold to `_`.
+ */
+export function azureCronScheduleSettingKey(id: string): string {
+  return `LARANJA_CRON_${id.replace(/[^A-Za-z0-9_]/g, "_")}_SCHEDULE`;
+}
+
+/**
  * ARM parameter name for a code-discovered `env("NAME")`.
  *
  * laranja-cdk declares the parameter; the CLI supplies its value at deploy time.

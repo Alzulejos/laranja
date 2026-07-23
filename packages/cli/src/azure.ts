@@ -396,6 +396,28 @@ export interface LogRow {
   timestamp: number;
   message: string;
   severity: string;
+  /** The function the line came from (e.g. "api", a cron id), best-effort. */
+  fn: string;
+}
+
+/**
+ * List the functions the deployed app is hosting (e.g. `api`, each cron id), so
+ * `logs` can offer a picker and validate a `--function` choice. Best-effort:
+ * returns `[]` if the app or its function list can't be read (nothing to pick
+ * from, so the caller falls back to showing all).
+ */
+export async function listAzureFunctions(target: AzureTarget, functionApp: string): Promise<string[]> {
+  const token = await managementToken();
+  const id = resourceId(target, "Microsoft.Web", "sites", functionApp);
+  const res = await fetch(`https://management.azure.com${id}/functions?api-version=2023-12-01`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { value?: { name?: string }[] };
+  // A function's `name` is "<app>/<functionName>" — keep the last segment.
+  return (body.value ?? [])
+    .map((f) => (f.name ?? "").split("/").pop() ?? "")
+    .filter(Boolean);
 }
 
 /**
@@ -427,21 +449,33 @@ export async function logAnalyticsWorkspaceId(
 export async function queryAppLogs(
   workspaceId: string,
   sinceMs: number,
-  afterTimestamp?: number,
+  opts: { afterTimestamp?: number; functionName?: string } = {},
 ): Promise<LogRow[]> {
   const token = await azureCredential().getToken("https://api.loganalytics.io/.default");
   if (!token) throw new Error("Could not acquire a Log Analytics token.");
 
-  const floorIso = new Date(afterTimestamp ?? Date.now() - sinceMs).toISOString();
+  const floorIso = new Date(opts.afterTimestamp ?? Date.now() - sinceMs).toISOString();
+  // Only allow safe identifier chars into the query (function names are ids like
+  // "api" / a cron id) — never interpolate raw user input into KQL.
+  const safeFn = opts.functionName?.replace(/[^A-Za-z0-9_-]/g, "");
+  const filter = safeFn ? `| where fn == "${safeFn}" ` : "";
+
   // Workspace-based App Insights stores telemetry under `App*` tables with
   // PascalCase columns (NOT the classic `traces`/`timestamp`). AppTraces holds
-  // console output + Functions host logs; alias the columns to what the parser
-  // below reads. Exceptions also surface here at error severity.
+  // console output + Functions host logs. The function a line came from is in
+  // `Properties.Category` (`Function.<name>.User` for user logs) or falls back to
+  // `OperationName`. `top ... desc` keeps the MOST RECENT 500 (a plain
+  // `order by asc | take 500` returns the OLDEST, hiding fresh logs on a busy app);
+  // we re-sort ascending afterwards so output still reads oldest→newest.
   const kql =
     `AppTraces ` +
     `| where TimeGenerated > datetime(${floorIso}) ` +
-    `| project timestamp = TimeGenerated, message = Message, severityLevel = SeverityLevel ` +
-    `| order by timestamp asc | take 500`;
+    `| extend _cat = tostring(Properties["Category"]) ` +
+    `| extend fn = iff(_cat startswith "Function.", extract(@"Function\\.([^.]+)", 1, _cat), tostring(OperationName)) ` +
+    filter +
+    `| top 500 by TimeGenerated desc ` +
+    `| order by TimeGenerated asc ` +
+    `| project timestamp = TimeGenerated, message = Message, severityLevel = SeverityLevel, fn`;
 
   const res = await fetch(`https://api.loganalytics.io/v1/workspaces/${workspaceId}/query`, {
     method: "POST",
@@ -460,11 +494,13 @@ export async function queryAppLogs(
   const tsIdx = col("timestamp");
   const msgIdx = col("message");
   const sevIdx = col("severityLevel");
+  const fnIdx = col("fn");
 
   return table.rows.map((r) => ({
     timestamp: new Date(String(r[tsIdx])).getTime(),
     message: String(r[msgIdx] ?? ""),
     severity: severityName(Number(r[sevIdx] ?? 1)),
+    fn: fnIdx >= 0 ? String(r[fnIdx] ?? "") : "",
   }));
 }
 

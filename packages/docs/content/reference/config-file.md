@@ -38,7 +38,7 @@ it. For a deploy with no HTTP app, just omit the marker (see
 | Field | Required | Default | Description |
 |---|---|---|---|
 | `name` | ✅ | — | App name. Used for the CloudFormation stack and all resource names. |
-| `region` | | `AWS_REGION` / `AWS_DEFAULT_REGION` | AWS region to deploy to. |
+| `region` | | `AWS_REGION` / `AWS_DEFAULT_REGION` | Region to deploy to. On AWS falls back to the env vars; on Azure, the region of the resource group + Function App (e.g. `"westus2"`). |
 | `stage` | | `"dev"` | Deployment stage. Part of the stack + resource names and injected as the `STAGE` env var. Override per-run with [`--stage`](../guides/stages-and-environments.md). |
 | `profile` | | — | AWS named profile to deploy with. |
 | `framework` | | _auto-detected_ | Override framework detection (e.g. `"express"`). |
@@ -47,7 +47,8 @@ it. For a deploy with no HTTP app, just omit the marker (see
 | `compute` | | `{ memory: 256, timeout: 30 }` | Default memory (MB) and timeout (s) for **every** function. See [compute](#compute). |
 | `resources` | | `{}` | Per-resource overrides keyed by resource id (`http`, or a cron/queue id). See [resources](#resources). |
 | `projectId` | ✅ | — | Project id from the laranja dashboard. Required by the server-side build (`plan`/`deploy`/`eject`); `laranja init` fills it in. |
-| `provider` | | `"aws"` | Target cloud. Only `"aws"` is implemented today. |
+| `provider` | | `"aws"` | Target cloud — `"aws"` (full support) or `"azure"` (Express HTTP + env today). See [provider](#provider). |
+| `azure` | | — | Azure subscription + resource group. **Required when `provider: "azure"`.** See [azure](#azure). |
 
 ### `name`
 
@@ -67,6 +68,41 @@ The default is `"dev"`. It's part of resource names and is injected into every
 Lambda as `process.env.STAGE`. The [`--stage`](../guides/stages-and-environments.md)
 flag overrides it per command — the recommended way to drive multiple
 environments from one config.
+
+### `provider`
+
+The target cloud. Defaults to `"aws"`, which runs the full feature set. Set it to
+`"azure"` to deploy an **Express HTTP app + environment variables** to your own
+Azure subscription — see [Deploying to Azure](../guides/deploying-to-azure.md).
+Azure crons/queues and NestJS aren't supported yet; a config that declares them
+under `provider: "azure"` is rejected with a clear message pointing you at AWS.
+
+### `azure`
+
+Required when `provider: "azure"`. Names the subscription and the
+**already-existing** resource group laranja deploys into:
+
+```ts
+const config: LaranjaConfig = {
+  name: "my-api",
+  projectId: "proj_…",
+  provider: "azure",
+  region: "westus2",
+  azure: {
+    subscriptionId: "00000000-0000-0000-0000-000000000000",
+    resourceGroup: "my-existing-group",
+  },
+};
+```
+
+| Key | Description |
+|---|---|
+| `subscriptionId` | Azure subscription id the resources are created in (`az account show --query id -o tsv`). |
+| `resourceGroup` | Resource group to deploy into. **Must already exist** — laranja deploys into it, it doesn't create it. |
+
+These live in their own block (rather than loose top-level keys) so Azure's
+identifiers can't be confused with laranja's own — `projectId` is your laranja
+**dashboard** project, unrelated to any cloud identifier.
 
 ### `cors`
 

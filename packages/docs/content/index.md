@@ -31,6 +31,7 @@ npx laranja deploy
 - **[Schedules](./guides/schedules.md)** — the `rate()` / `every()` builders and raw expressions.
 - **[Environment variables](./guides/environment-variables.md)** — `env`, `STAGE`, and resolution.
 - **[Stages & environments](./guides/stages-and-environments.md)** — dev / staging / prod with one codebase.
+- **[Deploying to Azure](./guides/deploying-to-azure.md)** — deploy an Express app + env to your own Azure subscription.
 
 ## Reference
 
@@ -39,6 +40,9 @@ npx laranja deploy
 - **[Decorators & markers](./reference/decorators-and-markers.md)** — `@Cron`, `@Queue`, `cron`, `queue`, `http`, `env`.
 - **[What gets deployed](./reference/what-gets-deployed.md)** — the AWS resources and how they're named.
 
-> **Status:** v1 targets **AWS** with **Express** today; **NestJS support is
-> coming**. The internal model is provider- and framework-neutral, so new clouds
-> and frameworks land without changing your app code.
+> **Status:** **AWS** runs the full feature set — **Express** and **NestJS**, with
+> HTTP, crons, and queues. **Azure** is available for **Express HTTP apps and
+> environment variables** today ([guide](./guides/deploying-to-azure.md)); Azure
+> crons/queues and NestJS are a fast-follow. The internal model is provider- and
+> framework-neutral, so new clouds and frameworks land without changing your app
+> code.

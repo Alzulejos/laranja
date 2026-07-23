@@ -100,6 +100,52 @@ describe("cron shim", () => {
   });
 });
 
+describe("azure shim (one package hosts http + crons)", () => {
+  const azureApp = { name: "app", framework: "express" as const, provider: "azure" as const, stage: "dev", entry: "src/app.ts" };
+
+  test("crons fold into the single http entry, not separate entries", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        http: { handlerEntry: "src/app.ts", appExport: "app", routes: [] },
+        crons: [
+          { style: "function", id: "poll", schedule: "rate(5 minutes)", file: "src/jobs.ts", exportName: "poll", source: "src/jobs.ts:1" },
+        ],
+      }),
+      opts,
+    );
+    // ONE package: the http entry, and nothing cron-shaped alongside it.
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    expect(entries.find((e) => e.kind === "cron")).toBeUndefined();
+
+    const http = byId(entries, "http");
+    // Registers via side effect (no exported symbol), like the HTTP-only Azure shim.
+    expect(http.handlerExport).toBe("");
+    expect(http.contents).toContain(`import { registerAzureHttp, registerAzureCron } from "@alzulejos/laranja-runtime";`);
+    expect(http.contents).toContain(`import { poll } from "../../src/jobs";`);
+    expect(http.contents).toContain(`registerAzureHttp(app);`);
+    expect(http.contents).toContain(`registerAzureCron("poll", poll);`);
+  });
+
+  test("several methods on one class share a single import", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        http: { handlerEntry: "src/app.ts", appExport: "app", routes: [] },
+        crons: [
+          { style: "method", id: "Jobs-a", schedule: "rate(5 minutes)", file: "src/jobs.ts", className: "Jobs", method: "a", source: "src/jobs.ts:1" },
+          { style: "method", id: "Jobs-b", schedule: "rate(1 hour)", file: "src/jobs.ts", className: "Jobs", method: "b", source: "src/jobs.ts:2" },
+        ],
+      }),
+      opts,
+    );
+    const http = byId(entries, "http");
+    expect(http.contents.match(/import \{ Jobs \} from/g)?.length).toBe(1);
+    expect(http.contents).toContain(`registerAzureCron("Jobs-a", Jobs, "a");`);
+    expect(http.contents).toContain(`registerAzureCron("Jobs-b", Jobs, "b");`);
+  });
+});
+
 describe("queue shim", () => {
   test("function style wraps the exported consumer", () => {
     const entries = generateEntries(

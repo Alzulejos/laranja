@@ -128,8 +128,13 @@ function awsDowToStandard(field: string): string {
  * Unix expression (`*` placeholders, 0=Sunday) that cronstrue understands. The
  * inverse of the lowering `nestCronToSchedule` performs. Returns the input
  * untouched for anything that isn't 5- or 6-field, so the caller can fall back.
+ *
+ * Exported because it is the single source of truth for the AWS-dialect quirks
+ * (`?` placeholders, 1=Sunday day-of-week, trailing year field): `describeSchedule`
+ * uses it for cronstrue, and the Azure back half builds NCRONTAB on top of it
+ * rather than re-deriving the same conversion.
  */
-function awsCronToStandard(expr: string): string {
+export function awsCronToStandard(expr: string): string {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5 && parts.length !== 6) return expr;
   const [minute, hour, dom, month, dow] = parts; // parts[5] (year) is dropped

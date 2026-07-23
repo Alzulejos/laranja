@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { generateEntries, type GeneratedEntry } from "@alzulejos/laranja-runtime";
 import { bundleEntries } from "@alzulejos/laranja-assembly";
-import { buildAzureHostJson, AZURE_HTTP_FUNCTION_NAME, armParamName } from "@alzulejos/laranja-core";
+import { buildAzureHostJson, AZURE_HTTP_FUNCTION_NAME, armParamName, azureCronScheduleSettingKey } from "@alzulejos/laranja-core";
 import type { InfraIR } from "@alzulejos/laranja-core";
 
 function azureIR(): InfraIR {
@@ -113,6 +113,14 @@ describe("azure package layout", () => {
 describe("azure contracts", () => {
   test("the registered function name is a single shared constant", () => {
     expect(AZURE_HTTP_FUNCTION_NAME).toBe("api");
+  });
+
+  test("cron schedule setting key is a stable, sanitized contract", () => {
+    // laranja-cdk writes this app setting; the shim binds `schedule: '%KEY%'`.
+    // Both derive it from the cron id, so the exact format is load-bearing.
+    expect(azureCronScheduleSettingKey("poll")).toBe("LARANJA_CRON_poll_SCHEDULE");
+    // Non-alphanumerics fold to underscore; case is preserved (Linux is case-sensitive).
+    expect(azureCronScheduleSettingKey("Jobs.refreshCache")).toBe("LARANJA_CRON_Jobs_refreshCache_SCHEDULE");
   });
 
   test("armParamName is injective where the AWS param name is lossy", () => {

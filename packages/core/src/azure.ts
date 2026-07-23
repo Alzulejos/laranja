@@ -82,7 +82,10 @@ export function buildAzureHostJson(timeoutSeconds: number): Record<string, unkno
     },
     logging: {
       applicationInsights: {
-        samplingSettings: { isEnabled: true, excludedTypes: "Request" },
+        // Sampling DROPS telemetry to save cost — wrong for a `logs` tail, where a
+        // silently-missing line looks like a broken deploy. Keep everything; a
+        // serverless app's log volume is small enough that completeness wins.
+        samplingSettings: { isEnabled: false },
       },
     },
   };

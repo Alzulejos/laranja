@@ -22,7 +22,7 @@ Commands:
   plan       Preview what a deploy would change (created/changed/unchanged)
   deploy     Deploy into your AWS account (uses local credentials)
   destroy    Tear down the deployed stack
-  logs       Tail CloudWatch logs for a deployed function
+  logs       Tail logs for a deployed function (CloudWatch on AWS, App Insights on Azure)
   eject      Generate an owned, editable CDK project (paid)
 
 Flags:

@@ -10,10 +10,10 @@ laranja can deploy to **your own Azure subscription** as an alternative to AWS.
 The model is the same one you already know — you write the app, laranja reads the
 code and ships the infrastructure — only the back half targets Azure instead.
 
-> **What's supported today:** **Express HTTP apps** and **environment variables**,
-> at full parity with AWS. **Crons and queues** (`@Cron` / `@Queue` / `cron()` /
-> `queue()`) and **NestJS** are AWS-only for now — Azure timer and Service Bus
-> triggers are a fast-follow. Deploy those workloads to AWS in the meantime.
+> **What's supported today:** **Express** apps with **HTTP**, **crons** (`@Cron` /
+> `cron()`), and **environment variables**. **Queues** (`@Queue` / `queue()`) and
+> **NestJS** are AWS-only for now — Azure Service Bus triggers and NestJS are a
+> fast-follow. Deploy those workloads to AWS in the meantime.
 
 ## Prerequisites
 
@@ -87,12 +87,38 @@ re-deploy that doesn't re-supply them.
 > secrets, read them at runtime from a secret store (Azure Key Vault) inside your
 > handler. First-class secrets support is on the roadmap.
 
+## Crons
+
+[Cron jobs](./cron-jobs.md) work on Azure — declare them with `@Cron` or `cron()`
+exactly as on AWS. The difference is structural: Azure hosts **one Function App
+containing many functions**, so each cron becomes a **timer-triggered function
+inside that same app** rather than its own isolated resource. Your HTTP proxy and
+every cron are distinct functions sharing the app's compute, scaling, and identity.
+
+Schedules are lowered to Azure's **NCRONTAB** format and stored as application
+settings, so [changing a schedule](./schedules.md) is a config update rather than a
+repackage. The portable `rate()` / `every()` builders work unchanged, and a raw
+`cron(...)` expression is translated for you.
+
+A few AWS-specific cron options don't map to an Azure timer and are **ignored with
+a warning** — the deploy still succeeds:
+
+- **`dlq`**, **`retryAttempts`**, **`maxEventAge`** come from Lambda's async-invoke
+  model; an Azure timer has no queued event to retry, age out, or dead-letter. For
+  at-least-once delivery with dead-lettering, reach for a queue (a fast-follow on
+  Azure) rather than a timer.
+- **Per-cron `timezone`** — Azure applies one timezone per Function App, so the
+  first cron's timezone applies app-wide and a conflicting one warns.
+
 ## What gets deployed
 
-A single **Function App** on the Flex Consumption plan hosts your Express app,
-alongside the resources it needs, all inside your resource group:
+A single **Function App** on the Flex Consumption plan hosts your Express app —
+and any crons, as timer functions in that same app — alongside the resources it
+needs, all inside your resource group:
 
-- a **Function App** (`Microsoft.Web/sites`) + its Flex Consumption plan,
+- a **Function App** (`Microsoft.Web/sites`) + its Flex Consumption plan, hosting
+  your HTTP proxy and one **timer function per cron** (crons add no infrastructure
+  of their own — they're functions inside this app, configured via app settings),
 - a **storage account** for the deployment package,
 - **Application Insights** + a **Log Analytics workspace** that back
   [`laranja logs`](../reference/commands.md#logs).

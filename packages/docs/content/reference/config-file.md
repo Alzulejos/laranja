@@ -47,7 +47,7 @@ it. For a deploy with no HTTP app, just omit the marker (see
 | `compute` | | `{ memory: 256, timeout: 30 }` | Default memory (MB) and timeout (s) for **every** function. See [compute](#compute). |
 | `resources` | | `{}` | Per-resource overrides keyed by resource id (`http`, or a cron/queue id). See [resources](#resources). |
 | `projectId` | ✅ | — | Project id from the laranja dashboard. Required by the server-side build (`plan`/`deploy`/`eject`); `laranja init` fills it in. |
-| `provider` | | `"aws"` | Target cloud — `"aws"` (full support) or `"azure"` (Express HTTP + env today). See [provider](#provider). |
+| `provider` | | `"aws"` | Target cloud — `"aws"` (full support) or `"azure"` (Express HTTP + crons + env today). See [provider](#provider). |
 | `azure` | | — | Azure subscription + resource group. **Required when `provider: "azure"`.** See [azure](#azure). |
 
 ### `name`
@@ -72,9 +72,9 @@ environments from one config.
 ### `provider`
 
 The target cloud. Defaults to `"aws"`, which runs the full feature set. Set it to
-`"azure"` to deploy an **Express HTTP app + environment variables** to your own
-Azure subscription — see [Deploying to Azure](../guides/deploying-to-azure.md).
-Azure crons/queues and NestJS aren't supported yet; a config that declares them
+`"azure"` to deploy an **Express app — HTTP, crons, and environment variables** —
+to your own Azure subscription — see [Deploying to Azure](../guides/deploying-to-azure.md).
+Azure **queues** and **NestJS** aren't supported yet; a config that declares them
 under `provider: "azure"` is rejected with a clear message pointing you at AWS.
 
 ### `azure`

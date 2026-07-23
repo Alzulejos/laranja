@@ -41,8 +41,8 @@ npx laranja deploy
 - **[What gets deployed](./reference/what-gets-deployed.md)** — the AWS resources and how they're named.
 
 > **Status:** **AWS** runs the full feature set — **Express** and **NestJS**, with
-> HTTP, crons, and queues. **Azure** is available for **Express HTTP apps and
+> HTTP, crons, and queues. **Azure** runs **Express** apps with **HTTP, crons, and
 > environment variables** today ([guide](./guides/deploying-to-azure.md)); Azure
-> crons/queues and NestJS are a fast-follow. The internal model is provider- and
+> queues and NestJS are a fast-follow. The internal model is provider- and
 > framework-neutral, so new clouds and frameworks land without changing your app
 > code.

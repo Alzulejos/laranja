@@ -22,9 +22,11 @@ import {
   resolveApiKey,
 } from "@alzulejos/laranja-core";
 import {
+  azureResourceGroupLocation,
   deleteResourceById,
   deleteRoleAssignmentsForPrincipal,
   functionAppPrincipalId,
+  managementToken,
   resourceId,
 } from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
@@ -66,17 +68,31 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     return;
   }
 
+  // Report the group's real Azure region (e.g. "westus2"), not the group name —
+  // same as deploy. Best-effort with a fallback; a lookup must never block teardown.
+  let region = target.resourceGroup;
+  try {
+    const location = await azureResourceGroupLocation(
+      await managementToken(),
+      target.subscriptionId,
+      target.resourceGroup,
+    );
+    if (location) region = location;
+  } catch {
+    // keep the fallback
+  }
+
   step("open teardown");
   const deploymentId = await postDestroy(
     // `stackName` is the wire's name for "what's being torn down"; Azure has no
     // stack, so send the same app-stage identity the resources are named after.
-    { stackName: `${app}-${stage}`, artifact: "arm", provider: "AZURE", region: target.resourceGroup },
+    { stackName: `${app}-${stage}`, artifact: "arm", provider: "AZURE", region },
     apiKey,
     projectId,
   );
   note({ deploymentId });
   await reportSafely("report start", () =>
-    patchDeployment(deploymentId, { status: "STARTED", region: target.resourceGroup }, apiKey, projectId),
+    patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId),
   );
 
   // Capture the app's principal BEFORE deleting it — the role assignments are

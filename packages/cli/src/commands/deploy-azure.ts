@@ -25,7 +25,15 @@ import {
   type DeployedResource,
 } from "@alzulejos/laranja-core";
 import { buildAzureAssembly } from "../pipeline.js";
-import { azureResourceExists, deployTemplate, oneDeployPublish, resourceId, zipDir } from "../azure.js";
+import {
+  azureResourceExists,
+  azureResourceGroupLocation,
+  deployTemplate,
+  managementToken,
+  oneDeployPublish,
+  resourceId,
+  zipDir,
+} from "../azure.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
@@ -64,10 +72,24 @@ export async function deployAzure(
   // failure mode worth avoiding.
   for (const w of warnings) ui.warn(w.message);
 
-  // The region only becomes known here: the template takes its location from the
-  // resource group, so the CLI reports the group as the deploy target.
+  // The ARM template inherits its location from the resource group rather than
+  // naming a region, so read the group's real location (e.g. "westus2") and
+  // report THAT — the dashboard's region field expects an Azure region, not the
+  // group name. Best-effort: fall back to the group name if the lookup can't run,
+  // and never let it block the deploy.
+  let region = target.resourceGroup;
+  try {
+    const location = await azureResourceGroupLocation(
+      await managementToken(),
+      target.subscriptionId,
+      target.resourceGroup,
+    );
+    if (location) region = location;
+  } catch {
+    // keep the fallback; a region lookup must never fail a deploy
+  }
   await reportSafely("report start", () =>
-    patchDeployment(deploymentId, { status: "STARTED", region: target.resourceGroup }, apiKey, projectId),
+    patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId),
   );
 
   const { resolved, missing } = resolveDeclaredEnv(ir.envKeys);

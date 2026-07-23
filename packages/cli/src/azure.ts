@@ -146,6 +146,35 @@ export async function managementToken(): Promise<string> {
 }
 
 /**
+ * The resource group's Azure region (its `location`, e.g. "westus2") — the real
+ * region a deploy lands in, since the ARM template inherits its location from the
+ * group (`[resourceGroup().location]`) rather than naming one.
+ *
+ * Returns `null` if the group doesn't exist (404), or `undefined` if the lookup
+ * itself couldn't run — callers that only need the region treat both as "unknown".
+ * Takes an already-acquired token so a caller doing several checks (preflight)
+ * doesn't re-authenticate per call.
+ */
+export async function azureResourceGroupLocation(
+  token: string,
+  sub: string,
+  rg: string,
+): Promise<string | null | undefined> {
+  try {
+    const res = await fetch(
+      `https://management.azure.com/subscriptions/${sub}/resourcegroups/${rg}?api-version=2021-04-01`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) return undefined;
+    const body = (await res.json()) as { location?: string };
+    return body.location ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Ask ARM to VALIDATE the template via a raw REST call and return a readable,
  * flattened explanation of why it was rejected — or undefined if validation
  * unexpectedly passed (the deploy failed for some other reason).
@@ -183,19 +212,6 @@ async function explainArmFailure(args: {
     // Network/token trouble here must not mask the original deploy failure.
     return undefined;
   }
-}
-
-/**
- * Validate a template without deploying it. Returns a readable error, or
- * undefined when the template is valid. Exposed for a future `laranja plan`.
- */
-export async function validateTemplate(args: {
-  target: AzureTarget;
-  deploymentName: string;
-  template: Record<string, unknown>;
-  parameters: Record<string, string>;
-}): Promise<string | undefined> {
-  return explainArmFailure(args);
 }
 
 /**

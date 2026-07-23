@@ -13,7 +13,7 @@
  */
 
 import type { LaranjaConfig } from "@alzulejos/laranja-core";
-import { managementToken } from "./azure.js";
+import { managementToken, azureResourceGroupLocation } from "./azure.js";
 import { getAccountId } from "./aws.js";
 import * as ui from "./ui.js";
 
@@ -204,25 +204,3 @@ async function azureProviderState(token: string, sub: string, ns: string): Promi
   }
 }
 
-/**
- * The resource group's location, `null` if it doesn't exist (404), or undefined
- * if the check itself couldn't run.
- */
-async function azureResourceGroupLocation(
-  token: string,
-  sub: string,
-  rg: string,
-): Promise<string | null | undefined> {
-  try {
-    const res = await fetch(
-      `https://management.azure.com/subscriptions/${sub}/resourcegroups/${rg}?api-version=2021-04-01`,
-      { headers: { Authorization: `Bearer ${token}` } },
-    );
-    if (res.status === 404) return null;
-    if (!res.ok) return undefined;
-    const body = (await res.json()) as { location?: string };
-    return body.location ?? undefined;
-  } catch {
-    return undefined;
-  }
-}

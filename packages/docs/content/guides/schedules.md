@@ -10,6 +10,13 @@ Schedules drive [cron jobs](./cron-jobs.md). laranja stores them in a
 **provider-neutral** form, so prefer the builders — they're portable across
 clouds. A raw expression string is available as an escape hatch.
 
+> **Across providers:** on AWS a schedule lowers to an EventBridge expression; on
+> **Azure** it lowers to **NCRONTAB** for a timer trigger. The builders are exact
+> either way. One caveat: AWS `rate(...)` is a fixed interval, while an Azure timer
+> is calendar-aligned — so a rate that doesn't evenly divide its unit (e.g.
+> `rate(7, "minutes")`) drifts at the unit boundary on Azure, and the deploy warns.
+> Use a divisor (5, 10, 15, 20, 30) to line them up.
+
 ## `rate(value, unit)`
 
 "Every N units." Portable everywhere.

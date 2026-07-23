@@ -6,8 +6,12 @@ order: 2
 
 # Cron jobs
 
-A cron job is a function that runs on a schedule. Each one becomes
+A cron job is a function that runs on a schedule. On AWS each one becomes
 [its own Lambda plus an EventBridge rule](../reference/what-gets-deployed.md#cron--lambda--eventbridge-rule).
+
+> On **Azure**, the same `@Cron` / `cron()` code deploys as a **timer function
+> inside your one Function App** instead — see
+> [Deploying to Azure](./deploying-to-azure.md#crons) for the differences.
 
 ## Class style — `@Cron`
 

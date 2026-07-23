@@ -42,10 +42,33 @@ describe("loadConfig", () => {
     await expect(loadConfig(dir)).rejects.toThrow(/"name" is required/);
   });
 
-  test("rejects a provider other than aws", async () => {
+  test("rejects a provider with no back-half", async () => {
     const dir = makeProject({
-      "laranja.config.ts": `export default { name: "api", provider: "azure" };`,
+      "laranja.config.ts": `export default { name: "api", provider: "gcp" };`,
     });
-    await expect(loadConfig(dir)).rejects.toThrow(/only "aws" today/);
+    await expect(loadConfig(dir)).rejects.toThrow(/"aws" or "azure" today/);
+  });
+
+  test("accepts azure when subscription and resource group are set", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "azure", azure: { subscriptionId: "sub-1", resourceGroup: "rg-1" } };`,
+    });
+    const cfg = await loadConfig(dir);
+    expect(cfg.provider).toBe("azure");
+    expect(cfg.azure?.resourceGroup).toBe("rg-1");
+  });
+
+  test("azure requires an explicit subscription - it can't be inferred", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "azure", azure: { resourceGroup: "rg-1" } };`,
+    });
+    await expect(loadConfig(dir)).rejects.toThrow(/subscriptionId/);
+  });
+
+  test("azure requires a resource group", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "azure", azure: { subscriptionId: "sub-1" } };`,
+    });
+    await expect(loadConfig(dir)).rejects.toThrow(/resourceGroup/);
   });
 });

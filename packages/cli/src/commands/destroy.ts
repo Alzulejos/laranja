@@ -1,5 +1,7 @@
 import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@alzulejos/laranja-core";
 import { getAccountId, deleteStack } from "../aws.js";
+import { destroyAzure } from "./destroy-azure.js";
+import { preflightOrAbort } from "../preflight.js";
 import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import { applyAwsEnv, confirm, requireRegion } from "../io.js";
@@ -8,6 +10,18 @@ import * as ui from "../ui.js";
 export async function destroy(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Verify access before tearing anything down — for destroy that's credentials
+  // (deleting doesn't need provider registration, and a missing group just means
+  // nothing to do). Both providers.
+  step("preflight");
+  if (!(await preflightOrAbort(config, "destroy"))) return;
+
+  // Dispatch before any AWS-specific work (account resolution, CloudFormation).
+  if (config.provider === "azure") {
+    return destroyAzure(projectDir, opts);
+  }
+
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 

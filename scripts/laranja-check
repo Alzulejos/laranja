@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# laranja-check — run the local half of a deploy (no API key, no cloud creds).
+# See scripts/local-check.ts for what it does and why. Local development only.
+set -euo pipefail
+LARANJA_REPO="${LARANJA_REPO:-/Users/ferasallaou/dev/laranja}"
+exec npx --prefix "$LARANJA_REPO" tsx "$LARANJA_REPO/scripts/local-check.ts" "${1:-$PWD}"

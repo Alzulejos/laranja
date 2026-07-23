@@ -3,6 +3,18 @@ import { createRequire } from "node:module";
 import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { build, type Plugin } from "esbuild";
 import type { GeneratedEntry } from "@alzulejos/laranja-runtime";
+import {
+  AZURE_DEFAULT_TIMEOUT_SECONDS,
+  buildAzureHostJson,
+  type CloudProvider,
+} from "@alzulejos/laranja-core";
+
+/**
+ * Version range declared in the generated Azure `package.json`. Kept in step
+ * with `@alzulejos/laranja-runtime`'s own dependency — the shim is bundled
+ * against that copy, so a wide drift here would install a second one.
+ */
+const AZURE_FUNCTIONS_RANGE = "^4.16.2";
 
 /**
  * LOCAL PARITY: the one rule that makes bundling arbitrary user code safe.
@@ -77,6 +89,24 @@ function packageName(spec: string): string {
   return spec.startsWith("@") ? parts.slice(0, 2).join("/") : parts[0];
 }
 
+/**
+ * Resolve a package's install root from a require base. Tries `<name>/package.json`
+ * first, then the bare `<name>` entry — many packages hide package.json behind an
+ * `exports` map (ERR_PACKAGE_PATH_NOT_EXPORTED), so the package.json path alone
+ * misses them. Returns undefined if the package genuinely can't be resolved.
+ */
+function resolvePackageRoot(req: NodeJS.Require, name: string): string | undefined {
+  for (const spec of [`${name}/package.json`, name]) {
+    try {
+      const root = packageRoot(req.resolve(spec), name);
+      if (root) return root;
+    } catch {
+      /* try the next form */
+    }
+  }
+  return undefined;
+}
+
 /** The installed package's root dir, derived from a resolved file inside it. */
 function packageRoot(resolvedFile: string, pkgName: string): string | undefined {
   const needle = path.join("node_modules", ...pkgName.split("/")) + path.sep;
@@ -137,14 +167,33 @@ function copyNativeClosure(natives: Map<string, string>, assetDir: string): void
     const req = createRequire(path.join(root, "noop.js"));
     for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
       if (copied.has(dep)) continue;
-      try {
-        const depRoot = packageRoot(req.resolve(dep.endsWith("/") ? dep : `${dep}/package.json`), dep);
-        if (depRoot) queue.push([dep, depRoot]);
-      } catch {
-        // Doesn't resolve locally -> can't be needed at runtime either.
-      }
+      const depRoot = resolvePackageRoot(req, dep);
+      if (depRoot) queue.push([dep, depRoot]);
+      // Unresolvable -> can't be needed at runtime either (local parity).
     }
   }
+}
+
+/**
+ * Copy one package (resolved from `projectDir`) plus its production dependency
+ * closure into `<assetDir>/node_modules`, reusing the native-closure walker.
+ * Used for `@azure/functions`, which must ship physically because it's external.
+ */
+function copyPackageIntoAssets(name: string, projectDir: string, assetDir: string): void {
+  const resolveFrom = (reqBase: string): string | undefined =>
+    resolvePackageRoot(createRequire(reqBase), name);
+
+  // Try the user's project first, then this bundler's own location — `runtime`
+  // (which the shim imports the registration API from) depends on
+  // @azure/functions, so it's resolvable alongside the bundler in every install
+  // shape. Shipping runtime's exact copy keeps one matching instance.
+  const root = resolveFrom(path.join(projectDir, "noop.js")) ?? resolveFrom(import.meta.url);
+  if (!root) {
+    throw new Error(
+      `Azure deploy needs "${name}", but it couldn't be resolved. Run: npm i ${name}`,
+    );
+  }
+  copyNativeClosure(new Map([[name, root]]), assetDir);
 }
 
 /** A bundled Lambda handler ready to become a CDK asset. */
@@ -164,6 +213,44 @@ export interface BundleOptions {
   buildDir: string;
   /** User project root — resolution baseline for the local-parity rule. */
   projectDir: string;
+  /**
+   * Target cloud; decides the asset LAYOUT (not the bundling itself). Lambda
+   * loads a bare `index.cjs` from the zip, but the Azure Functions host expects
+   * a project it can detect — see `writeAzurePackageFiles`. Defaults to "aws".
+   */
+  provider?: CloudProvider;
+  /** Resolved HTTP timeout in seconds — Azure only, lands in host.json. */
+  httpTimeoutSeconds?: number;
+}
+
+/**
+ * The files an Azure Functions deployment package needs beside the bundle.
+ *
+ * ⚠️ Both MUST be at the ZIP ROOT. If the zip has a parent folder
+ * (`project/host.json`), the Functions host detects NO FUNCTIONS AT ALL — it
+ * doesn't error, it just serves nothing. That silent failure is why this is
+ * centralised here and pinned by a test.
+ *
+ * `main` tells the host which file registers functions. Everything the user's
+ * app imports is already esbuild-inlined, so the only declared dependency is the
+ * Functions library itself.
+ *
+ * `host.json` carries the function TIMEOUT, which is not an ARM property — see
+ * `buildAzureHostJson` in core for why it is built client-side.
+ */
+function writeAzurePackageFiles(assetDir: string, timeoutSeconds: number): void {
+  const pkg = {
+    name: "laranja-function",
+    private: true,
+    // CommonJS: esbuild emits `format: "cjs"`, and omitting "type" keeps .js CJS.
+    main: "index.js",
+    dependencies: { "@azure/functions": AZURE_FUNCTIONS_RANGE },
+  };
+  writeFileSync(path.join(assetDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
+  writeFileSync(
+    path.join(assetDir, "host.json"),
+    `${JSON.stringify(buildAzureHostJson(timeoutSeconds), null, 2)}\n`,
+  );
 }
 
 /**
@@ -188,16 +275,27 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     entryPoints[`${assetName}/index`] = path.join(opts.entryDir, e.fileName);
   }
 
+  const isAzure = opts.provider === "azure";
   const natives = new Map<string, string>();
   await build({
     entryPoints,
     outdir: opts.buildDir,
     bundle: true,
     platform: "node",
-    target: "node20",
+    // Flex Consumption runs Node 22; Lambda runs 20.
+    target: isAzure ? "node22" : "node20",
     format: "cjs",
-    outExtension: { ".js": ".cjs" },
-    external: ["@aws-sdk/*", "aws-sdk"],
+    // Azure resolves the entry through package.json `main`, which must point at
+    // a real file — so emit `index.js` there (still CJS, since the generated
+    // package.json omits "type"). Lambda is handed `index.cjs` directly.
+    ...(isAzure ? {} : { outExtension: { ".js": ".cjs" } }),
+    // AWS: the Lambda runtime PROVIDES the AWS SDK, so exclude it.
+    // Azure: @azure/functions MUST NOT be bundled. The Functions host registers
+    // functions through ITS module instance; a bundled copy has a private
+    // registry the host can't see, so app.http() calls vanish and the host finds
+    // zero functions (the "up and running" default page). It stays external and
+    // is shipped in node_modules below.
+    external: isAzure ? ["@azure/functions"] : ["@aws-sdk/*", "aws-sdk"],
     plugins: [localParityPlugin(opts.projectDir, natives)],
     logLevel: "warning",
   });
@@ -206,11 +304,21 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     const assetDir = path.join(opts.buildDir, assetNameById.get(e.id)!);
     // Ship externalized native packages next to the bundle that requires them.
     if (natives.size > 0) copyNativeClosure(natives, assetDir);
+    // Azure packages are a project the host inspects, not a bare file.
+    if (isAzure) {
+      writeAzurePackageFiles(assetDir, opts.httpTimeoutSeconds ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
+      // @azure/functions is external (see above), so it must physically exist in
+      // the package's node_modules for the host to load the SAME instance the
+      // shim registered against. Copy it plus its production closure.
+      copyPackageIntoAssets("@azure/functions", opts.projectDir, assetDir);
+    }
     return {
       id: e.id,
       kind: e.kind,
       assetDir,
-      handler: `index.${e.handlerExport}`,
+      // Azure shims register with the host instead of exporting a symbol (empty
+      // handlerExport), so there's no `file.export` handler to report.
+      handler: e.handlerExport ? `index.${e.handlerExport}` : "",
     };
   });
 }

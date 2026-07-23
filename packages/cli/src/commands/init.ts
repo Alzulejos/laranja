@@ -15,13 +15,14 @@ import * as ui from "../ui.js";
 import { RESOURCE_TYPES_FILE } from "../resource-types.js";
 import { resolveProjectId, writeProjectId, writeName } from "../project-link.js";
 
-const TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
+const AWS_TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
 
 const config: TypedLaranjaConfig = {
   // Both filled in from the dashboard project you pick during \`laranja init\`.
   name: "",
   // From your laranja dashboard — identifies this project on the server.
   projectId: "",
+  provider: "aws",
   region: "eu-central-1",
   env: {},
   // Emit a CloudWatch dashboard (\`<name>-<stage>\`) with per-function metrics —
@@ -32,6 +33,31 @@ const config: TypedLaranjaConfig = {
   // Per-resource overrides, keyed by resource id ("http", or a cron/queue id).
   // Filled in once you have resources, e.g.:
   // resources: { cleanup: { memory: 512, timeout: 60 } },
+};
+
+export default config;
+`;
+
+/** Azure config. `__SUBSCRIPTION__`/`__RESOURCE_GROUP__` are filled in by init. */
+const AZURE_TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
+
+const config: TypedLaranjaConfig = {
+  // Both filled in from the dashboard project you pick during \`laranja init\`.
+  name: "",
+  // From your laranja dashboard — identifies this project on the server.
+  projectId: "",
+  provider: "azure",
+  // Azure region. Must support Flex Consumption AND accept new customers.
+  region: "__REGION__",
+  // Google/AWS have account discovery; Azure does not — these are required.
+  azure: {
+    subscriptionId: "__SUBSCRIPTION__",
+    resourceGroup: "__RESOURCE_GROUP__",
+  },
+  env: {},
+  // Instance memory is a fixed set on Flex Consumption (512/2048/4096);
+  // other values snap up to the nearest. timeout lands in host.json.
+  compute: { memory: 512, timeout: 30 },
 };
 
 export default config;
@@ -107,8 +133,28 @@ export async function init(projectDir: string): Promise<void> {
   if (configExists) {
     console.log(`${CONFIG_FILENAME} already exists — nothing to do.`);
   } else {
-    writeFileSync(file, TEMPLATE);
-    console.log(`Created ${CONFIG_FILENAME}.`);
+    // Ask which cloud, then scaffold a provider-appropriate config. Azure has no
+    // credential-based account discovery, so collect its required identifiers now
+    // — that's also what lets the preflight below actually check the environment.
+    const provider =
+      (await ui.select("Which cloud do you want to deploy to?", [
+        { label: "AWS", value: "aws" as const },
+        { label: "Azure  (HTTP + Express today)", value: "azure" as const },
+      ])) ?? "aws";
+
+    let template = AWS_TEMPLATE;
+    if (provider === "azure") {
+      const subscriptionId =
+        (await ui.promptText("Azure subscription id (az account show --query id -o tsv):")) ?? "__SUBSCRIPTION__";
+      const resourceGroup =
+        (await ui.promptText("Azure resource group (must already exist):")) ?? "__RESOURCE_GROUP__";
+      const region = (await ui.promptText("Azure region [westus2]:")) || "westus2";
+      template = AZURE_TEMPLATE.replace("__SUBSCRIPTION__", subscriptionId)
+        .replace("__RESOURCE_GROUP__", resourceGroup)
+        .replace("__REGION__", region);
+    }
+    writeFileSync(file, template);
+    console.log(`Created ${CONFIG_FILENAME} (${provider}).`);
   }
 
   // The config imports `TypedLaranjaConfig` from here; seed a permissive stub so
@@ -135,6 +181,12 @@ export async function init(projectDir: string): Promise<void> {
     );
   }
   console.log(
+    `  ${ui.dim(`You can change any of this later in ${CONFIG_FILENAME}.`)}`,
+  );
+  console.log(
     "  Next: wrap your app with `export default http(app)`, then run `laranja deploy`.",
   );
+  // Note: the cloud-environment preflight (credentials, providers, resource
+  // group) runs at DEPLOY time, not here — at init the values may still be
+  // placeholders, and the check belongs where it prevents a real failure.
 }

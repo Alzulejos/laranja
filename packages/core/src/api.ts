@@ -353,6 +353,43 @@ export interface DestroyResponse {
   deploymentId: string;
 }
 
+/**
+ * `POST /v1/report` body — a structured CLI failure report.
+ *
+ * Sent best-effort by the top-level command handler when a command throws, so a
+ * half-way failure leaves a durable record of WHAT failed, in WHICH step, and
+ * WHY. When `deploymentId` is set, the server attaches this to that deployment's
+ * `metadata` (jsonb) so the dashboard can show the reason next to a FAILED row;
+ * when it's null (a failure before `/synth` opened a row) there's nothing to
+ * attach to, and the server just logs it.
+ *
+ * This is complementary to the status lifecycle — the CLI still PATCHes `FAILED`
+ * separately; this carries the human-readable detail behind that status.
+ *
+ * SECURITY: diagnostics only, tenant-scoped on read. `stack` may contain local
+ * filesystem paths; it never contains env-var values or secrets.
+ */
+export interface DeploymentFailureReport {
+  /** Which deployment to attach to, or null if the failure predates the row. */
+  deploymentId: string | null;
+  /** The command that failed, e.g. "deploy" | "destroy" | "plan". */
+  command: string;
+  /** The step it died on, e.g. "arm deployment" | "zip package". */
+  step: string;
+  /** The error message. */
+  reason: string;
+  /** The error's constructor name, when it was an `Error`. */
+  errorName?: string;
+  /** The stack trace, when available. */
+  stack?: string;
+  /** Wall-clock time from command start to failure. */
+  durationMs: number;
+  /** ISO-8601 timestamp of the failure. */
+  at: string;
+  /** Context accumulated during the run (stage, region, functionApp, …). */
+  fields: Record<string, unknown>;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Errors                                                                     */
 /* -------------------------------------------------------------------------- */

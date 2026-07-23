@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-runtime",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -17,15 +17,11 @@
   },
   "dependencies": {
     "@codegenie/serverless-express": "^4.1.6",
-<<<<<<< HEAD
-    "@alzulejos/laranja-core": "0.3.1"
-=======
     "@azure/functions": "^4.16.2",
-    "@alzulejos/laranja-core": "0.2.4"
->>>>>>> 7606a93 (Feat: Azure support (#21))
+    "@alzulejos/laranja-core": "0.4.0"
   },
   "devDependencies": {
-    "@alzulejos/laranja-scanner": "0.3.1",
+    "@alzulejos/laranja-scanner": "0.4.0",
     "@types/aws-lambda": "^8.10.145",
     "esbuild": "^0.28.1"
   }

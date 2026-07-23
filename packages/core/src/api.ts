@@ -100,7 +100,7 @@ export interface CreateProjectResponse {
 /* -------------------------------------------------------------------------- */
 
 /** The artifact the client wants from `/synth`. `cdk` requires a paid tier. */
-export type SynthArtifact = "cloudformation" | "cdk";
+export type SynthArtifact = "cloudformation" | "cdk" | "arm";
 
 /**
  * Per-handler content hash of the client-built zip, keyed by handler id
@@ -125,6 +125,26 @@ export interface HandlerAsset {
   hash: string;
   /** S3 object key the template references (in the bootstrap assets bucket). */
   s3Key: string;
+}
+
+/**
+ * What `/synth` reports back per handler on Azure.
+ *
+ * Same idea as `HandlerAsset`, different destination: the package goes to a blob
+ * container, and the function app fetches it from there on startup. What the
+ * client needs to know is WHERE TO UPLOAD.
+ */
+export interface AzureHandlerAsset {
+  /** Handler id — matches the client's bundled-zip id ("http" today). */
+  id: string;
+  /** Short label (e.g. "app"). */
+  label: string;
+  /** Content hash supplied for this handler. */
+  hash: string;
+  /** Blob name within the deployment container. */
+  blobName: string;
+  /** Container the package must be uploaded to. */
+  container: string;
 }
 
 /** `POST /v1/synth` body. */
@@ -178,17 +198,48 @@ export interface EjectResponse {
   files: GeneratedFile[];
 }
 
+/**
+ * Azure: the synthesized ARM template the CLI then deploys.
+ *
+ * No `stackName` — ARM has no stack concept; a deployment is named at submit
+ * time by the client. The template is environment-agnostic (location comes from
+ * the resource group), so the server never learns where a deploy lands.
+ */
+export interface ArmSynthResponse extends SynthResponseBase {
+  artifact: "arm";
+  /** ARM template as JSON. */
+  template: Record<string, unknown>;
+  /** Per-handler blob locations the client must upload to before deploying. */
+  assets: AzureHandlerAsset[];
+  /** Resolved resource names the client needs for upload + reporting. */
+  names: { functionApp: string; storageAccount: string; container: string };
+  /** Non-fatal mapping warnings (e.g. memory snapped to an instance size). */
+  warnings?: { code: string; message: string }[];
+}
+
 /** `200` response from `/synth` — discriminated on `artifact`. */
-export type SynthResponse = CloudFormationSynthResponse | CdkSynthResponse;
+export type SynthResponse =
+  | CloudFormationSynthResponse
+  | CdkSynthResponse
+  | ArmSynthResponse;
 
 /**
- * `200` response from `/diff` — a read-only synth. Same fields as the
- * CloudFormation synth response but with NO `deploymentId` (nothing is
- * persisted). Fields are optional to mirror the server's `Partial<SynthResponse>`.
+ * `200` response from `/diff` — a read-only synth (no `deploymentId`, nothing
+ * persisted). Carries whichever template the provider produces.
+ *
+ * `artifact` says which kind. It's OPTIONAL for back-compat: an older server
+ * that predates this field omits it, and the client treats a missing value as
+ * "cloudformation" (the only thing those servers returned).
  */
-export type DiffResponse = Partial<
-  Pick<CloudFormationSynthResponse, "stackName" | "template" | "assets">
->;
+export interface DiffResponse {
+  artifact?: SynthArtifact;
+  /** CloudFormation stack name (AWS only). */
+  stackName?: string;
+  /** The template to diff — CloudFormation or ARM JSON, per `artifact`. */
+  template?: Record<string, unknown>;
+  /** Per-handler asset map (AWS/CloudFormation only). */
+  assets?: HandlerAsset[];
+}
 
 /* -------------------------------------------------------------------------- */
 /* Deployment reporting (lifecycle)                                           */
@@ -300,6 +351,43 @@ export interface DestroyRequest {
 /** `POST /v1/deployment/destory` response — the new teardown row's id. */
 export interface DestroyResponse {
   deploymentId: string;
+}
+
+/**
+ * `POST /v1/report` body — a structured CLI failure report.
+ *
+ * Sent best-effort by the top-level command handler when a command throws, so a
+ * half-way failure leaves a durable record of WHAT failed, in WHICH step, and
+ * WHY. When `deploymentId` is set, the server attaches this to that deployment's
+ * `metadata` (jsonb) so the dashboard can show the reason next to a FAILED row;
+ * when it's null (a failure before `/synth` opened a row) there's nothing to
+ * attach to, and the server just logs it.
+ *
+ * This is complementary to the status lifecycle — the CLI still PATCHes `FAILED`
+ * separately; this carries the human-readable detail behind that status.
+ *
+ * SECURITY: diagnostics only, tenant-scoped on read. `stack` may contain local
+ * filesystem paths; it never contains env-var values or secrets.
+ */
+export interface DeploymentFailureReport {
+  /** Which deployment to attach to, or null if the failure predates the row. */
+  deploymentId: string | null;
+  /** The command that failed, e.g. "deploy" | "destroy" | "plan". */
+  command: string;
+  /** The step it died on, e.g. "arm deployment" | "zip package". */
+  step: string;
+  /** The error message. */
+  reason: string;
+  /** The error's constructor name, when it was an `Error`. */
+  errorName?: string;
+  /** The stack trace, when available. */
+  stack?: string;
+  /** Wall-clock time from command start to failure. */
+  durationMs: number;
+  /** ISO-8601 timestamp of the failure. */
+  at: string;
+  /** Context accumulated during the run (stage, region, functionApp, …). */
+  fields: Record<string, unknown>;
 }
 
 /* -------------------------------------------------------------------------- */

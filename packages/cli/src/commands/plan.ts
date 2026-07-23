@@ -1,6 +1,8 @@
 import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
 import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
+import { preflightOrAbort } from "../preflight.js";
+import { planAzure } from "./plan-azure.js";
 import { usesWebpackBuilder } from "../nest-build.js";
 import { getAccountId } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
@@ -29,6 +31,16 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   // loadConfig raises a clear "run `laranja init`" error if this directory isn't
   // linked yet (empty name/projectId); pipeline enforces projectId before synth.
   const config = await loadConfig(projectDir, { stage: opts.stage });
+
+  // Verify access before previewing — a read-only preview still needs working
+  // credentials (and, for AWS, a region to diff against the live stack).
+  if (!(await preflightOrAbort(config, "plan"))) return;
+
+  // Azure previews via ARM what-if, not a CloudFormation stack diff.
+  if (config.provider === "azure") {
+    return planAzure(projectDir, { stage: opts.stage });
+  }
+
   const region = requireRegion(config.region);
   applyAwsEnv({ region, profile: config.profile });
 

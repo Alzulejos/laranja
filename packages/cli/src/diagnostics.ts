@@ -10,7 +10,13 @@
  */
 import path from "node:path";
 import { appendFileSync, mkdirSync } from "node:fs";
-import { authDir, loadConfig, resolveApiKey, postReport } from "@alzulejos/laranja-core";
+import {
+  authDir,
+  loadConfig,
+  resolveApiKey,
+  postReport,
+  type DeploymentFailureReport,
+} from "@alzulejos/laranja-core";
 
 interface RunState {
   command: string;
@@ -37,16 +43,12 @@ export function note(fields: Record<string, unknown>): void {
   Object.assign(run.fields, fields);
 }
 
-export interface FailureReport {
-  command: string;
-  step: string;
-  reason: string;
-  errorName?: string;
-  stack?: string;
-  durationMs: number;
-  at: string;
-  fields: Record<string, unknown>;
-}
+/**
+ * The local report shape — identical to the wire contract minus `deploymentId`
+ * (which is lifted from `fields` only when POSTing). Derived from the core type
+ * so the two can't drift.
+ */
+export type FailureReport = Omit<DeploymentFailureReport, "deploymentId">;
 
 /** Build the structured report for a thrown error against the current run. */
 export function buildFailureReport(err: unknown): FailureReport {
@@ -97,17 +99,15 @@ export async function sendFailureReport(report: FailureReport): Promise<boolean>
   }
   if (!projectId) return false;
   try {
-    // The dashboard's /report reads exactly { deploymentId, message, stage }. The
-    // richer report (step, stack, timing) stays in the local errors.jsonl only.
-    await postReport(
-      {
-        deploymentId: report.fields.deploymentId ?? null,
-        message: report.reason,
-        stage: report.fields.stage ?? null,
-      },
-      apiKey,
-      projectId,
-    );
+    // Send the full unified report. When `deploymentId` is set the server
+    // attaches it to that deployment's metadata so the dashboard can show WHAT
+    // failed, in WHICH step, and WHY next to the FAILED row. `deploymentId` is
+    // lifted to the top level (from the run's fields) as the routing key.
+    const payload: DeploymentFailureReport = {
+      deploymentId: (report.fields.deploymentId as string | undefined) ?? null,
+      ...report,
+    };
+    await postReport(payload, apiKey, projectId);
     return true;
   } catch {
     return false;

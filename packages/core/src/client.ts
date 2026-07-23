@@ -18,6 +18,7 @@ import {
   type ResourcesReport,
   type DestroyRequest,
   type DestroyResponse,
+  type DeploymentFailureReport,
   type ApiError,
   type ApiErrorCode,
 } from "./api.js";
@@ -290,11 +291,11 @@ export function postEject(
 }
 
 /**
- * `POST /v1/report` — send a free-form CLI failure report, scoped to the user
- * (api key) + project (project id). Diagnostics only; the body shape is open.
+ * `POST /v1/report` — send a structured CLI failure report, scoped to the user
+ * (api key) + project (project id). Diagnostics only. See `DeploymentFailureReport`.
  */
 export function postReport(
-  report: Record<string, unknown>,
+  report: DeploymentFailureReport,
   apiKey: string,
   projectId: string,
   baseUrl?: string,

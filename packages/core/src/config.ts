@@ -100,11 +100,27 @@ export interface LaranjaConfig {
    * header on `/synth`. Obtain it when you create the project in the dashboard.
    */
   projectId?: string;
-  /** Target cloud. Only "aws" is implemented today. Defaults to "aws". */
+  /**
+   * Target cloud. "aws" is fully supported; "azure" is HTTP-only (Express) today.
+   * Defaults to "aws".
+   */
   provider?: CloudProvider;
   region?: string;
   /** AWS named profile to deploy with. */
   profile?: string;
+  /**
+   * Azure-specific settings; required when `provider: "azure"`.
+   *
+   * Kept in their own block rather than as loose top-level keys so provider
+   * identifiers can't be confused with laranja's own — note `projectId` above is
+   * your laranja DASHBOARD project, unrelated to any cloud identifier.
+   */
+  azure?: {
+    /** Azure subscription id the resources are created in. */
+    subscriptionId: string;
+    /** Resource group to deploy into. Must already exist. */
+    resourceGroup: string;
+  };
   /** Override framework detection. */
   framework?: Framework;
   /** Deployment stage; part of resource names (e.g. "dev", "prod"). Defaults to "dev". */
@@ -231,14 +247,28 @@ export async function loadConfig(
   // The HTTP app is declared in code via an `http(app)` marker, which the scanner
   // resolves — there's no config field for it. The scanner raises a clear error
   // if there's ultimately nothing to deploy.
-  // Only AWS is implemented today. Reject any other provider up front so a
-  // forward-compatible config field never silently deploys to the wrong (or no)
-  // back-half. This guard goes away per-arm once a discriminated union of real
-  // providers exists.
-  if (cfg.provider && cfg.provider !== "aws") {
+  // Reject providers with no back-half up front, so a forward-compatible config
+  // field never silently deploys to the wrong (or no) target. Each supported
+  // provider gets its own arm as it lands.
+  if (cfg.provider && cfg.provider !== "aws" && cfg.provider !== "azure") {
     throw new Error(
-      `${CONFIG_FILENAME}: provider "${cfg.provider}" isn't supported yet — only "aws" today.`,
+      `${CONFIG_FILENAME}: provider "${cfg.provider}" isn't supported yet — "aws" or "azure" today.`,
     );
+  }
+  if (cfg.provider === "azure") {
+    // There's no discovery equivalent to STS get-caller-identity: the target
+    // subscription and resource group can't be inferred from credentials
+    // (an identity may see many). Fail now rather than at deploy.
+    if (!cfg.azure?.subscriptionId) {
+      throw new Error(
+        `${CONFIG_FILENAME}: provider "azure" requires \`azure: { subscriptionId: "..." }\`.`,
+      );
+    }
+    if (!cfg.azure?.resourceGroup) {
+      throw new Error(
+        `${CONFIG_FILENAME}: provider "azure" requires \`azure: { resourceGroup: "..." }\` — laranja deploys into an existing group.`,
+      );
+    }
   }
   return {
     stage: "dev",

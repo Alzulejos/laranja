@@ -1,6 +1,7 @@
 export * from "./ir.js";
 export * from "./config.js";
 export * from "./env.js";
+export * from "./azure.js";
 export * from "./schedule.js";
 export * from "./nest-schedule.js";
 export * from "./api.js";

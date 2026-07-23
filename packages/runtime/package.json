@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@codegenie/serverless-express": "^4.1.6",
+    "@azure/functions": "^4.16.2",
     "@alzulejos/laranja-core": "0.2.4"
   },
   "devDependencies": {

@@ -221,7 +221,24 @@ export interface BundleOptions {
   provider?: CloudProvider;
   /** Resolved HTTP timeout in seconds — Azure only, lands in host.json. */
   httpTimeoutSeconds?: number;
+  /**
+   * The app declares queues, so the runtime producer (`getQueue().send()`) may run.
+   * Azure only: its Storage Queue SDK (`@azure/storage-queue`, via `@azure/identity`)
+   * must NOT be esbuild-bundled — `@azure/storage-common` does
+   * `createRequire(import.meta.url)` at module init, which is `undefined` in a CJS
+   * bundle and throws. So we externalize it and ship it in node_modules, like
+   * `@azure/functions`. On AWS the producer's `@aws-sdk/client-sqs` is already
+   * external + runtime-provided, so this flag is a no-op there.
+   */
+  hasQueues?: boolean;
 }
+
+/**
+ * The Azure producer SDKs that must ship physically rather than be bundled.
+ * `@azure/storage-queue` pulls in `@azure/storage-common`, whose `crc64` module
+ * calls `createRequire(import.meta.url)` — fatal once inlined into a CJS bundle.
+ */
+const AZURE_PRODUCER_SDKS = ["@azure/storage-queue", "@azure/identity"] as const;
 
 /**
  * The files an Azure Functions deployment package needs beside the bundle.
@@ -276,6 +293,9 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
   }
 
   const isAzure = opts.provider === "azure";
+  // Azure producer SDKs are externalized (see AZURE_PRODUCER_SDKS) and shipped below;
+  // only pulled in when the app actually declares queues.
+  const azureProducerExternals = isAzure && opts.hasQueues ? [...AZURE_PRODUCER_SDKS] : [];
   const natives = new Map<string, string>();
   await build({
     entryPoints,
@@ -295,7 +315,7 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     // registry the host can't see, so app.http() calls vanish and the host finds
     // zero functions (the "up and running" default page). It stays external and
     // is shipped in node_modules below.
-    external: isAzure ? ["@azure/functions"] : ["@aws-sdk/*", "aws-sdk"],
+    external: isAzure ? ["@azure/functions", ...azureProducerExternals] : ["@aws-sdk/*", "aws-sdk"],
     plugins: [localParityPlugin(opts.projectDir, natives)],
     logLevel: "warning",
   });
@@ -311,6 +331,11 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
       // the package's node_modules for the host to load the SAME instance the
       // shim registered against. Copy it plus its production closure.
       copyPackageIntoAssets("@azure/functions", opts.projectDir, assetDir);
+      // The producer SDKs are external too (their ESM breaks when bundled), so ship
+      // them + their closure the same way — only when the app declares queues.
+      if (opts.hasQueues) {
+        for (const sdk of AZURE_PRODUCER_SDKS) copyPackageIntoAssets(sdk, opts.projectDir, assetDir);
+      }
     }
     return {
       id: e.id,

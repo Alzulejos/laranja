@@ -181,6 +181,9 @@ export async function deployAzure(
   step("report success");
   const resources = buildAzureResources({
     name: names.functionApp,
+    appName: ir.app.name,
+    stage: ir.app.stage,
+    monitoring: ir.app.monitoring,
     target,
     crons: ir.crons,
     missingEnv: missing,

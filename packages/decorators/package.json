@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@aws-sdk/client-sqs": "^3.658.0",
-    "@alzulejos/laranja-core": "0.4.5"
+    "@azure/identity": "^4.13.1",
+    "@azure/storage-queue": "^12.31.0",
+    "@alzulejos/laranja-core": "0.2.4"
   }
 }

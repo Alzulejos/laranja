@@ -11,9 +11,9 @@ The model is the same one you already know — you write the app, laranja reads 
 code and ships the infrastructure — only the back half targets Azure instead.
 
 > **What's supported today:** **Express** apps with **HTTP**, **crons** (`@Cron` /
-> `cron()`), and **environment variables**. **Queues** (`@Queue` / `queue()`) and
-> **NestJS** are AWS-only for now — Azure Service Bus triggers and NestJS are a
-> fast-follow. Deploy those workloads to AWS in the meantime.
+> `cron()`), **queues** (`@Queue` / `queue()`, backed by Azure Storage Queues —
+> [FIFO is AWS-only](#queues)), and **environment variables**. **NestJS** is AWS-only
+> for now — it's a fast-follow. Deploy NestJS workloads to AWS in the meantime.
 
 ## Prerequisites
 
@@ -105,21 +105,52 @@ a warning** — the deploy still succeeds:
 
 - **`dlq`**, **`retryAttempts`**, **`maxEventAge`** come from Lambda's async-invoke
   model; an Azure timer has no queued event to retry, age out, or dead-letter. For
-  at-least-once delivery with dead-lettering, reach for a queue (a fast-follow on
-  Azure) rather than a timer.
+  at-least-once delivery with dead-lettering, reach for a [queue](#queues) rather
+  than a timer.
 - **Per-cron `timezone`** — Azure applies one timezone per Function App, so the
   first cron's timezone applies app-wide and a conflicting one warns.
+
+## Queues
+
+[Queues](./queues.md) work on Azure — declare a consumer with `@Queue` or `queue()`
+and produce with [`getQueue().send()`](./queues.md#sending-messages), the same code
+as on AWS. Each queue becomes an **Azure Storage Queue** plus a
+**queue-triggered function** inside the one Function App (like crons, the consumer is
+a function in the shared app, not its own isolated resource). Producing needs no
+setup: the app's **managed identity** is granted access to the storage account, so
+`getQueue("emails").send({ … })` just works — no connection string, no SAS.
+
+The one real difference is **FIFO**. AWS SQS offers true FIFO queues (ordered,
+deduplicated); **Azure Storage Queues do not** — they're best-effort ordering with
+at-least-once delivery and no deduplication. laranja won't silently downgrade that
+guarantee, so a `fifo: true` queue (or a `.fifo` name) is **rejected at
+`plan`/`deploy` time** on Azure with a clear message. Use a standard queue, or deploy
+that workload to AWS. (True FIFO on Azure means Service Bus, which is a future
+option.)
+
+A few AWS-specific queue options don't map to a Storage Queue trigger and are
+**ignored with a warning** — the deploy still succeeds:
+
+- **`dlq`** — a Storage Queue trigger doesn't dead-letter to a queue _you_ name;
+  instead the host moves a message that fails repeatedly to an automatic
+  **`‹queue›-poison`** queue. So a configured `dlq` target is ignored, and poison
+  messages land in `‹queue›-poison` in the same storage account.
+- **`visibilityTimeout`**, **`maxBatchingWindow`**, **`reportBatchItemFailures`**,
+  **`messageRetention`** are SQS/event-source knobs with no per-queue Storage Queue
+  equivalent, and **`batchSize`** is a host-wide setting on Azure (not per-queue).
 
 ## What gets deployed
 
 A single **Function App** on the Flex Consumption plan hosts your Express app —
-and any crons, as timer functions in that same app — alongside the resources it
-needs, all inside your resource group:
+and any crons and queue consumers, as functions in that same app — alongside the
+resources it needs, all inside your resource group:
 
 - a **Function App** (`Microsoft.Web/sites`) + its Flex Consumption plan, hosting
-  your HTTP proxy and one **timer function per cron** (crons add no infrastructure
-  of their own — they're functions inside this app, configured via app settings),
-- a **storage account** for the deployment package,
+  your HTTP proxy, one **timer function per cron**, and one **queue-triggered
+  function per queue** (crons and queues add no compute of their own — they're
+  functions inside this app),
+- a **storage account** for the deployment package **and your queues**
+  (`Microsoft.Storage/…/queueServices/queues`, one per declared queue),
 - **Application Insights** + a **Log Analytics workspace** that back
   [`laranja logs`](../reference/commands.md#logs).
 

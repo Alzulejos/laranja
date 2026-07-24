@@ -186,6 +186,7 @@ export async function deployAzure(
     monitoring: ir.app.monitoring,
     target,
     crons: ir.crons,
+    queues: ir.queues,
     missingEnv: missing,
     action: alreadyExists ? "UPDATED" : "CREATED",
   });

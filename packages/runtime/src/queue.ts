@@ -5,12 +5,45 @@ type Ctor<T> = new () => T;
 /** The signature an `@Queue` consumer method receives: parsed body + raw record. */
 export type QueueConsumer = (body: unknown, record: SQSRecord, context: Context) => unknown | Promise<unknown>;
 
-function parseBody(body: string): unknown {
+/**
+ * Parse a queue message body into what the consumer sees. On AWS the SQS body is
+ * always a string; on Azure the Functions host may hand back an already-deserialized
+ * object for JSON messages — so pass non-strings through untouched and only attempt
+ * a parse on a string, falling back to the raw string when it isn't JSON. Either way
+ * the consumer sees the same shape the producer sent.
+ */
+export function parseQueueBody(body: unknown): unknown {
+  if (typeof body !== "string") return body;
   try {
     return JSON.parse(body);
   } catch {
     return body;
   }
+}
+
+/**
+ * Resolve a `@Queue` method or `queue()` function into a callable consumer, with a
+ * once-per-process instance cache for the class form. Provider-neutral: both the
+ * AWS batch handler and the Azure Storage-Queue registration build on this so the
+ * function-vs-method dispatch lives in one place (mirrors `makeScheduledInvoker`).
+ */
+export function makeQueueConsumer(consumer: QueueConsumer): QueueConsumer;
+export function makeQueueConsumer<T extends object>(Ctor: Ctor<T>, method: keyof T & string): QueueConsumer;
+export function makeQueueConsumer<T extends object>(
+  target: Ctor<T> | QueueConsumer,
+  method?: keyof T & string,
+): QueueConsumer {
+  if (method === undefined) return target as QueueConsumer;
+  const Ctor = target as Ctor<T>;
+  let instance: T | undefined;
+  return (body, record, context) => {
+    instance ??= new Ctor();
+    const fn = instance[method] as unknown;
+    if (typeof fn !== "function") {
+      throw new Error(`@Queue target ${Ctor.name}.${String(method)} is not a method`);
+    }
+    return (fn as QueueConsumer).call(instance, body, record, context);
+  };
 }
 
 /**
@@ -26,7 +59,7 @@ export async function runSqsBatch(
   const batchItemFailures: { itemIdentifier: string }[] = [];
   for (const record of event.Records) {
     try {
-      await consumer(parseBody(record.body), record, context);
+      await consumer(parseQueueBody(record.body), record, context);
     } catch {
       batchItemFailures.push({ itemIdentifier: record.messageId });
     }
@@ -55,17 +88,10 @@ export function createQueueHandler<T extends object>(
   target: Ctor<T> | QueueConsumer,
   method?: keyof T & string,
 ): (event: SQSEvent, context: Context) => Promise<SQSBatchResponse> {
-  let instance: T | undefined;
-  const resolveConsumer = (): QueueConsumer => {
-    if (method === undefined) return target as QueueConsumer;
-    const Ctor = target as Ctor<T>;
-    instance ??= new Ctor();
-    const fn = instance[method] as unknown;
-    if (typeof fn !== "function") {
-      throw new Error(`@Queue target ${Ctor.name}.${String(method)} is not a method`);
-    }
-    return (fn as QueueConsumer).bind(instance);
-  };
-
-  return async (event, context) => runSqsBatch(resolveConsumer(), event, context);
+  // Overloads guarantee the arg pairing; the cast just picks the right signature.
+  const consumer =
+    method === undefined
+      ? makeQueueConsumer(target as QueueConsumer)
+      : makeQueueConsumer(target as Ctor<T>, method);
+  return async (event, context) => runSqsBatch(consumer, event, context);
 }

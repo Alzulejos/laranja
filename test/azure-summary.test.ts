@@ -25,6 +25,15 @@ const cron = (id: string, schedule: InfraIR["crons"][number]["schedule"]): Infra
   schedule,
 });
 
+const queue = (name: string): InfraIR["queues"][number] => ({
+  style: "function",
+  file: "src/jobs.ts",
+  exportName: name,
+  source: "src/jobs.ts:1",
+  id: name,
+  name,
+});
+
 describe("azure reported resources", () => {
   test("with no crons, only the function app is reported", () => {
     const resources = buildAzureResources({
@@ -34,6 +43,7 @@ describe("azure reported resources", () => {
       monitoring: false,
       target,
       crons: [],
+      queues: [],
       missingEnv: [],
       action: "CREATED",
     });
@@ -53,6 +63,7 @@ describe("azure reported resources", () => {
       monitoring: false,
       target,
       crons,
+      queues: [],
       missingEnv: [],
       action: "UPDATED",
     });
@@ -75,6 +86,32 @@ describe("azure reported resources", () => {
     );
   });
 
+  test("each queue is reported as a queue resource mapping to its consumer function", () => {
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
+      target,
+      crons: [],
+      queues: [queue("emails"), queue("sms")],
+      missingEnv: [],
+      action: "CREATED",
+    });
+
+    // http + one row per queue, so the dashboard's queue→function graph renders.
+    expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["http:http", "queue:emails", "queue:sms"]);
+
+    const emails = resources.find((r) => r.name === "emails")!;
+    // Storage Queues have no FIFO, and metadata carries the physical queue name.
+    expect(emails.metadata).toEqual({ queueName: "emails", fifo: false });
+    // The consumer function is registered under the queue NAME (see registerAzureQueue).
+    expect(emails.externalId).toBe(
+      "/subscriptions/sub-123/resourceGroups/rg-app/providers/Microsoft.Web/sites/shop-dev/functions/emails",
+    );
+    expect(emails.externalUrl).toBeNull();
+  });
+
   test("missing env surfaces as a warning on the http resource only", () => {
     const resources = buildAzureResources({
       name: "shop-dev",
@@ -83,6 +120,7 @@ describe("azure reported resources", () => {
       monitoring: false,
       target,
       crons: [cron("poll", { kind: "rate", value: 1, unit: "hour" })],
+      queues: [],
       missingEnv: ["DATABASE_URL"],
       action: "CREATED",
     });
@@ -98,6 +136,7 @@ describe("azure reported resources", () => {
       monitoring: true,
       target,
       crons: [],
+      queues: [],
       missingEnv: [],
       action: "CREATED",
     });
@@ -118,6 +157,7 @@ describe("azure reported resources", () => {
       monitoring: false,
       target,
       crons: [],
+      queues: [],
       missingEnv: [],
       action: "CREATED",
     });
@@ -134,6 +174,18 @@ describe("azure functions summary", () => {
       expect(out).toContain("poll");
       expect(out).toContain("Every 5 minutes");
       expect(out).toContain("Cron");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("prints each queue so it isn't invisible", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      printAzureFunctions(makeIr({ queues: [queue("emails")] }));
+      const out = log.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(out).toContain("emails");
+      expect(out).toContain("Queue");
     } finally {
       log.mockRestore();
     }

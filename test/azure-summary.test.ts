@@ -27,7 +27,16 @@ const cron = (id: string, schedule: InfraIR["crons"][number]["schedule"]): Infra
 
 describe("azure reported resources", () => {
   test("with no crons, only the function app is reported", () => {
-    const resources = buildAzureResources({ name: "shop-dev", target, crons: [], missingEnv: [], action: "CREATED" });
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
+      target,
+      crons: [],
+      missingEnv: [],
+      action: "CREATED",
+    });
     expect(resources).toHaveLength(1);
     expect(resources[0].type).toBe("http");
   });
@@ -37,7 +46,16 @@ describe("azure reported resources", () => {
       cron("poll", { kind: "rate", value: 5, unit: "minute" }),
       cron("nightly", { kind: "cron", expression: "0 0 * * ? *", dialect: "aws" }),
     ];
-    const resources = buildAzureResources({ name: "shop-dev", target, crons, missingEnv: [], action: "UPDATED" });
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
+      target,
+      crons,
+      missingEnv: [],
+      action: "UPDATED",
+    });
 
     // http + one row per cron — so the dashboard shows the scheduled jobs.
     expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["http:http", "cron:poll", "cron:nightly"]);
@@ -60,6 +78,9 @@ describe("azure reported resources", () => {
   test("missing env surfaces as a warning on the http resource only", () => {
     const resources = buildAzureResources({
       name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
       target,
       crons: [cron("poll", { kind: "rate", value: 1, unit: "hour" })],
       missingEnv: ["DATABASE_URL"],
@@ -67,6 +88,40 @@ describe("azure reported resources", () => {
     });
     expect(resources[0].metadata.warnings).toEqual(["env with no value: DATABASE_URL"]);
     expect(resources[1].metadata.warnings).toBeUndefined();
+  });
+
+  test("monitoring on adds a dashboard row deep-linking to App Insights", () => {
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: true,
+      target,
+      crons: [],
+      missingEnv: [],
+      action: "CREATED",
+    });
+    // http + the observability node — the SAME `dashboard` type the AWS path emits.
+    expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["http:http", "dashboard:monitoring"]);
+    const mon = resources.find((r) => r.name === "monitoring")!;
+    const aiId =
+      "/subscriptions/sub-123/resourceGroups/rg-app/providers/Microsoft.Insights/components/shop-dev-ai";
+    expect(mon.externalId).toBe(aiId);
+    expect(mon.externalUrl).toBe(`https://portal.azure.com/#@/resource${aiId}/overview`);
+  });
+
+  test("monitoring off emits no dashboard row", () => {
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
+      target,
+      crons: [],
+      missingEnv: [],
+      action: "CREATED",
+    });
+    expect(resources.some((r) => r.type === "dashboard")).toBe(false);
   });
 });
 

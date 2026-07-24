@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja-runtime",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -18,10 +18,10 @@
   "dependencies": {
     "@codegenie/serverless-express": "^4.1.6",
     "@azure/functions": "^4.16.2",
-    "@alzulejos/laranja-core": "0.4.6"
+    "@alzulejos/laranja-core": "0.4.7"
   },
   "devDependencies": {
-    "@alzulejos/laranja-scanner": "0.4.6",
+    "@alzulejos/laranja-scanner": "0.4.7",
     "@types/aws-lambda": "^8.10.145",
     "esbuild": "^0.28.1"
   }

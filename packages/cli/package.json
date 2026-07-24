@@ -1,6 +1,6 @@
 {
   "name": "@alzulejos/laranja",
-  "version": "0.4.6",
+  "version": "0.4.7",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./src/index.ts",
@@ -18,10 +18,10 @@
     "access": "public"
   },
   "dependencies": {
-    "@alzulejos/laranja-assembly": "0.4.6",
-    "@alzulejos/laranja-core": "0.4.6",
-    "@alzulejos/laranja-runtime": "0.4.6",
-    "@alzulejos/laranja-scanner": "0.4.6",
+    "@alzulejos/laranja-assembly": "0.4.7",
+    "@alzulejos/laranja-core": "0.4.7",
+    "@alzulejos/laranja-runtime": "0.4.7",
+    "@alzulejos/laranja-scanner": "0.4.7",
     "@aws-cdk/toolkit-lib": "^1.29.0",
     "@aws-sdk/client-cloudformation": "^3.658.0",
     "@aws-sdk/client-cloudwatch-logs": "^3.658.0",

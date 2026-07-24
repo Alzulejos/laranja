@@ -84,6 +84,8 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
     // Azure's function timeout lives in host.json, inside the package — so it
     // must be known before bundling, since the package hash is computed here.
     httpTimeoutSeconds: ir.http?.compute?.timeout ?? AZURE_DEFAULT_TIMEOUT_SECONDS,
+    // Ship the Azure producer SDK (it can't be bundled) only when queues exist.
+    hasQueues: ir.queues.length > 0,
   });
   const assets = computeAssetHashes(handlers);
 

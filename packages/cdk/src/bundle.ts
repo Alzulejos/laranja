@@ -115,6 +115,29 @@ function packageRoot(resolvedFile: string, pkgName: string): string | undefined 
   return resolvedFile.slice(0, idx + needle.length - 1);
 }
 
+/**
+ * Find an installed package's directory by walking `node_modules` up from `fromDir`
+ * on the filesystem, WITHOUT `require.resolve`.
+ *
+ * `require.resolve` honours a package's `exports` map, so an ESM-only dependency
+ * that declares only an `import` condition (and doesn't export `./package.json`) is
+ * unresolvable from CJS and throws `ERR_PACKAGE_PATH_NOT_EXPORTED` — e.g. the Azure
+ * XML stack (`fast-xml-builder` -> `xml-naming`). Those packages are still physically
+ * present and genuinely needed, so to COPY one we locate its folder directly rather
+ * than resolve an entry point. Returns undefined only when it's truly absent.
+ */
+function findPackageDir(name: string, fromDir: string): string | undefined {
+  const segments = name.split("/");
+  let dir = fromDir;
+  for (;;) {
+    const candidate = path.join(dir, "node_modules", ...segments);
+    if (existsSync(path.join(candidate, "package.json"))) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
 /** Does this installed package ship a compiled addon? (binding.gyp / prebuilds / *.node) */
 function isNativePackage(pkgRoot: string, cache: Map<string, boolean>): boolean {
   const hit = cache.get(pkgRoot);
@@ -167,9 +190,11 @@ function copyNativeClosure(natives: Map<string, string>, assetDir: string): void
     const req = createRequire(path.join(root, "noop.js"));
     for (const dep of Object.keys({ ...pkg.dependencies, ...pkg.optionalDependencies })) {
       if (copied.has(dep)) continue;
-      const depRoot = resolvePackageRoot(req, dep);
+      // require.resolve first (respects the dep's real entry), then a filesystem
+      // walk for ESM-only packages it can't see (see findPackageDir). Only when
+      // BOTH miss is the dep genuinely absent -> skip it (local parity).
+      const depRoot = resolvePackageRoot(req, dep) ?? findPackageDir(dep, root);
       if (depRoot) queue.push([dep, depRoot]);
-      // Unresolvable -> can't be needed at runtime either (local parity).
     }
   }
 }

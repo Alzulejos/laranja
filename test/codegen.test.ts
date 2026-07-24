@@ -144,6 +144,28 @@ describe("azure shim (one package hosts http + crons)", () => {
     expect(http.contents).toContain(`registerAzureCron("Jobs-a", Jobs, "a");`);
     expect(http.contents).toContain(`registerAzureCron("Jobs-b", Jobs, "b");`);
   });
+
+  test("queues fold into the single http entry too, keyed by queue name", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        http: { handlerEntry: "src/app.ts", appExport: "app", routes: [] },
+        queues: [
+          { style: "function", id: "emails", name: "emails", file: "src/jobs.ts", exportName: "onEmail", source: "src/jobs.ts:1" },
+        ],
+      }),
+      opts,
+    );
+    // Still ONE package — no standalone queue-* entry alongside the http one.
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    expect(entries.find((e) => e.kind === "queue")).toBeUndefined();
+
+    const http = byId(entries, "http");
+    expect(http.contents).toContain(`registerAzureQueue`);
+    expect(http.contents).toContain(`import { onEmail } from "../../src/jobs";`);
+    // Registered by NAME — the key both the trigger binding and the producer read.
+    expect(http.contents).toContain(`registerAzureQueue("emails", onEmail);`);
+  });
 });
 
 describe("queue shim", () => {

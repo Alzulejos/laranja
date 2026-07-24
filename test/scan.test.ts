@@ -50,6 +50,19 @@ describe("class / decorator style", () => {
     expect(ir.queues[0]).toMatchObject({ name: "emails.fifo", fifo: true });
   });
 
+  test("rejects a FIFO queue when the provider is Azure (Storage Queues have no ordering)", () => {
+    const dir = makeProject({
+      "src/jobs.ts": `
+        import { queue } from "@alzulejos/laranja-decorators";
+        export async function onOrder() {}
+        queue({ name: "orders.fifo" }, onOrder);
+      `,
+    });
+    expect(() => scan({ projectDir: dir, config: cfg({ provider: "azure", http: false }) })).toThrow(
+      /FIFO queues aren't supported on Azure/,
+    );
+  });
+
   test("honors an explicit @Cron id and folds every()", () => {
     const dir = makeProject({
       "src/jobs.ts": `

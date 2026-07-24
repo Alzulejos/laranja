@@ -7,6 +7,7 @@ import {
   ENV_NAME_PATTERN,
   intervalToSchedule,
   isValidEnvName,
+  type CloudProvider,
   type ComputeConfig,
   type CorsConfig,
   type CronIR,
@@ -199,6 +200,7 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   const stage = config.stage ?? "dev";
   const provider = config.provider ?? "aws";
   const monitoring = config.monitoring ?? true;
+  assertProviderQueueSupport(provider, queues);
 
   return {
     app: { name: config.name, framework, provider, stage, monitoring, entry: http?.handlerEntry },
@@ -448,6 +450,29 @@ function applyQueueConfig(
     assertDlqTarget(q.name, override.dlq.queue, queueNames);
     q.dlq = { maxReceiveCount: override.dlq.maxReceiveCount, queue: override.dlq.queue };
   }
+}
+
+/**
+ * Reject FIFO queues on providers that can't honor the ordering/dedup guarantee.
+ *
+ * Our queue contract exposes true FIFO (ordered delivery, `groupId`, `dedupId`,
+ * content-based dedup) because AWS SQS backs it with a real FIFO queue. Azure's
+ * v1 backend is Storage Queues, which give best-effort ordering and no dedup —
+ * so a `fifo: true` queue there would SILENTLY downgrade a guarantee the code
+ * asked for. Fail at scan/plan time, before any infra is touched, rather than
+ * deploy something that looks ordered and isn't. (Service Bus, the Azure service
+ * that *does* offer FIFO, is a deliberate future upgrade, not v1.)
+ */
+function assertProviderQueueSupport(provider: CloudProvider, queues: QueueIR[]): void {
+  if (provider !== "azure") return;
+  const fifo = queues.filter((q) => q.fifo).map((q) => q.name);
+  if (fifo.length === 0) return;
+  throw new Error(
+    `laranja.config.ts: FIFO queues aren't supported on Azure — ${fifo.join(", ")}. ` +
+      `Azure Storage Queues (the v1 backend) have no ordering or deduplication guarantee, ` +
+      `so laranja won't silently downgrade one. Remove \`fifo\` / the ".fifo" suffix to use a ` +
+      `standard queue, or deploy this project to AWS.`,
+  );
 }
 
 /** A DLQ target must be another declared queue (by name) — never missing, never itself. */

@@ -44,6 +44,9 @@ export function printAzureFunctions(ir: InfraIR): void {
   for (const c of ir.crons) {
     rows.push({ name: c.id, kind: "Cron", detail: describeSchedule(c.schedule) });
   }
+  for (const q of ir.queues) {
+    rows.push({ name: q.id, kind: "Queue", detail: `Storage Queue "${q.name}"` });
+  }
   if (rows.length === 0) return;
 
   const nameW = Math.max(...rows.map((r) => r.name.length));
@@ -56,8 +59,9 @@ export function printAzureFunctions(ir: InfraIR): void {
 
 /**
  * The dashboard inventory for an Azure deploy: the HTTP proxy plus a `cron` row
- * per scheduled job. All live in ONE Function App, but each is a distinct FUNCTION
- * inside it (the http `api` function, one timer function per cron) — so each maps
+ * per scheduled job and a `queue` row per declared queue. All live in ONE Function
+ * App, but each is a distinct FUNCTION inside it (the http `api` function, one timer
+ * function per cron, one Storage-Queue-triggered function per queue) — so each maps
  * to its own function sub-resource (`…/sites/<app>/functions/<name>`), the handle
  * the portal recognises, rather than the bare app id. The action follows the app
  * (CREATED/UPDATED), and the schedule carries a ready-to-display description,
@@ -78,10 +82,11 @@ export function buildAzureResources(args: {
   monitoring: boolean;
   target: { subscriptionId: string; resourceGroup: string };
   crons: InfraIR["crons"];
+  queues: InfraIR["queues"];
   missingEnv: string[];
   action: "CREATED" | "UPDATED";
 }): DeployedResource[] {
-  const { name, appName, stage, monitoring, target, crons, missingEnv, action } = args;
+  const { name, appName, stage, monitoring, target, crons, queues, missingEnv, action } = args;
   const rgId = `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}`;
   const appId = `${rgId}/providers/Microsoft.Web/sites/${name}`;
   // Each function is individually addressable under the app; this is the id that
@@ -110,6 +115,22 @@ export function buildAzureResources(args: {
       action,
       metadata: { schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) } },
       externalId: functionId(cron.id),
+      externalUrl: null,
+    });
+  }
+
+  for (const queue of queues) {
+    // The consumer function is registered under the queue name (see registerAzureQueue),
+    // so that — not the queue id — is the function sub-resource the portal addresses.
+    // `type: "queue"` matches the AWS report so the dashboard's queue→function graph
+    // renders identically; fifo is always false (Storage Queues have no FIFO) and there's
+    // no per-queue batchSize, so the metadata is intentionally thinner than SQS's.
+    resources.push({
+      name: queue.id,
+      type: "queue",
+      action,
+      metadata: { queueName: queue.name, fifo: false },
+      externalId: functionId(queue.name),
       externalUrl: null,
     });
   }

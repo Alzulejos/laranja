@@ -77,3 +77,19 @@ export function envParamName(key: string): string {
 export function queueUrlEnvName(name: string): string {
   return `LARANJA_QUEUE_URL_${name.replace(/[^A-Za-z0-9]/g, "_")}`;
 }
+
+/**
+ * Environment variable naming the target cloud, injected into every function at
+ * deploy. It's how the runtime producer — `getQueue(name).send()` — knows which
+ * enqueue path to take (SQS vs Azure Storage Queue) without sniffing the value
+ * shape of `queueUrlEnvName`, which is brittle and provider-specific.
+ *
+ * Single source of truth shared by the back-halves (which set it) and
+ * laranja-runtime's producer (which reads it). Absent means AWS — so existing
+ * AWS deploys need no change and the default is the historical behaviour.
+ *
+ * ⚠️ laranja-cdk's Azure synth sets this via a value-identical literal (it
+ * consumes a PUBLISHED core tarball, so it can't import this yet) — change both
+ * together until it can.
+ */
+export const PROVIDER_ENV_NAME = "LARANJA_PROVIDER";

@@ -13,7 +13,13 @@
  * testable.
  */
 
-import { AZURE_HTTP_FUNCTION_NAME, describeSchedule, type DeployedResource, type InfraIR } from "@alzulejos/laranja-core";
+import {
+  AZURE_HTTP_FUNCTION_NAME,
+  azureAppInsightsName,
+  describeSchedule,
+  type DeployedResource,
+  type InfraIR,
+} from "@alzulejos/laranja-core";
 import * as ui from "./ui.js";
 
 /**
@@ -56,18 +62,28 @@ export function printAzureFunctions(ir: InfraIR): void {
  * the portal recognises, rather than the bare app id. The action follows the app
  * (CREATED/UPDATED), and the schedule carries a ready-to-display description,
  * matching the AWS report so the dashboard renders both providers the same way.
+ *
+ * When `monitoring` is on we also emit the observability node — a `dashboard` row
+ * (the SAME type the AWS path uses for its CloudWatch dashboard) whose `externalUrl`
+ * deep-links to the App Insights component. Reusing `type: "dashboard"` means the FE
+ * renders a clickable monitoring node for Azure without any provider-specific work,
+ * which is exactly what the AWS row's contract anticipates. Azure's App Insights
+ * overview gives Live Metrics / Logs / Failures out of the box, so there's no
+ * laranja-authored dashboard to point at — the component overview is the equivalent.
  */
 export function buildAzureResources(args: {
   name: string;
+  appName: string;
+  stage: string;
+  monitoring: boolean;
   target: { subscriptionId: string; resourceGroup: string };
   crons: InfraIR["crons"];
   missingEnv: string[];
   action: "CREATED" | "UPDATED";
 }): DeployedResource[] {
-  const { name, target, crons, missingEnv, action } = args;
-  const appId =
-    `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}` +
-    `/providers/Microsoft.Web/sites/${name}`;
+  const { name, appName, stage, monitoring, target, crons, missingEnv, action } = args;
+  const rgId = `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}`;
+  const appId = `${rgId}/providers/Microsoft.Web/sites/${name}`;
   // Each function is individually addressable under the app; this is the id that
   // maps a resource row to the specific function it triggers.
   const functionId = (fnName: string) => `${appId}/functions/${fnName}`;
@@ -95,6 +111,19 @@ export function buildAzureResources(args: {
       metadata: { schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) } },
       externalId: functionId(cron.id),
       externalUrl: null,
+    });
+  }
+
+  // Observability node — mirrors the AWS "monitoring" dashboard row (report.ts).
+  if (monitoring) {
+    const aiId = `${rgId}/providers/Microsoft.Insights/components/${azureAppInsightsName(appName, stage)}`;
+    resources.push({
+      name: "monitoring",
+      type: "dashboard",
+      action,
+      metadata: {},
+      externalId: aiId,
+      externalUrl: `https://portal.azure.com/#@/resource${aiId}/overview`,
     });
   }
 

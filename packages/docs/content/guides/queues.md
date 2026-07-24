@@ -9,6 +9,20 @@ order: 3
 A queue consumer processes messages from an SQS queue. Each one becomes
 [an SQS queue plus a consumer Lambda](../reference/what-gets-deployed.md#queue--sqs-queue--consumer-lambda).
 
+> On **Azure**, the same `@Queue` / `queue()` and `getQueue().send()` code deploys
+> as an **Azure Storage Queue** plus a queue-triggered function in the one Function
+> App. The one difference is **FIFO**, which is AWS-only — see the matrix below and
+> [Deploying to Azure](./deploying-to-azure.md#queues).
+
+| Capability | AWS (SQS) | Azure (Storage Queue) |
+|---|---|---|
+| Standard queues | ✅ | ✅ |
+| `getQueue().send()` producer | ✅ | ✅ |
+| `delaySeconds` on send | ✅ | ✅ (message visibility delay) |
+| FIFO (`fifo` / `.fifo`, ordering, dedup) | ✅ | ❌ rejected at `plan`/`deploy` |
+| Dead-letter queue | ✅ `dlq` (queue you name) | ⚠️ automatic `‹queue›-poison` |
+| `batchSize`, `visibilityTimeout`, `messageRetention` | ✅ per-queue | ⚠️ ignored (host-wide or N/A) |
+
 ## Class style — `@Queue`
 
 Decorate a method with [`@Queue`](../reference/decorators-and-markers.md#queue):
@@ -75,6 +89,10 @@ async processOrder(body: unknown) {
 
 ## FIFO queues
 
+> **AWS only.** FIFO relies on SQS FIFO queues; Azure Storage Queues have no
+> ordering or deduplication, so a FIFO queue is rejected at `plan`/`deploy` time on
+> Azure. Use a standard queue there, or keep FIFO workloads on AWS.
+
 End the name with `.fifo` (or set `fifo: true`) for ordered, exactly-once
 processing. Content-based deduplication is enabled automatically:
 
@@ -110,12 +128,13 @@ receives them already parsed — `getQueue("emails").send({ to })` on one end,
 `async sendEmail(body)` on the other.
 
 You can produce from **anywhere** in a deployed app — an HTTP route, a
-[cron job](./cron-jobs.md), or another queue's consumer fanning out. laranja
-injects each queue's URL into every function's environment at deploy and grants
-`sqs:SendMessage`, so there's no client to configure, no URL to look up, and no
-IAM to wire. It's a thin wrapper over one SQS `SendMessage` call — laranja
-provisions the infrastructure; it deliberately does **not** add a job framework
-(retries, scheduling, and job state stay with SQS and your consumer).
+[cron job](./cron-jobs.md), or another queue's consumer fanning out. laranja wires
+every function to send at deploy — on AWS it injects each queue's URL and grants
+`sqs:SendMessage`; on Azure it uses the app's managed identity against the storage
+account — so there's no client to configure, no URL to look up, and no IAM to wire.
+It's a thin wrapper over one `SendMessage` call — laranja provisions the
+infrastructure; it deliberately does **not** add a job framework (retries,
+scheduling, and job state stay with the queue and your consumer).
 
 ### FIFO and options
 

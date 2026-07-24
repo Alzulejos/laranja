@@ -187,6 +187,16 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
         runtimeImports.add("registerAzureCron");
         registrations.push(`registerAzureCron(${JSON.stringify(cron.id)}, ${factoryArgs});`);
       }
+      // Queues fold into the same package, exactly like crons: each registers a
+      // Storage-Queue trigger as a side effect. workersId (Nest method) queues are
+      // rejected upstream, so these are all standalone.
+      for (const queue of ir.queues) {
+        const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
+        const { importLine, factoryArgs } = handlerWiring(queue, spec);
+        userImports.set(importLine, importLine);
+        runtimeImports.add("registerAzureQueue");
+        registrations.push(`registerAzureQueue(${JSON.stringify(queue.name)}, ${factoryArgs});`);
+      }
       entries.push({
         id: "http",
         kind: "http",
@@ -253,8 +263,11 @@ export const handler = createScheduledHandler(${factoryArgs});
   }
 
   // Queue: one consumer Lambda per STANDALONE @Queue / queue(). Grouped Nest
-  // queues are hosted by their worker Lambda above.
+  // queues are hosted by their worker Lambda above. Azure has no per-queue entry —
+  // its queues are folded into the one app package in the http branch above — so
+  // this AWS-shaped loop skips them (mirrors the cron loop).
   for (const queue of ir.queues) {
+    if (ir.app.provider === "azure") break;
     if (isGrouped(queue)) continue;
     const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
     const { importLine, factoryArgs } = handlerWiring(queue, spec);

@@ -145,6 +145,29 @@ describe("azure shim (one package hosts http + crons)", () => {
     expect(http.contents).toContain(`registerAzureCron("Jobs-b", Jobs, "b");`);
   });
 
+  test("a crons/queues-only app (no http) still emits the single package, minus the proxy", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        // no http
+        crons: [
+          { style: "function", id: "poll", schedule: "rate(5 minutes)", file: "src/jobs.ts", exportName: "poll", source: "src/jobs.ts:1" },
+        ],
+        queues: [
+          { style: "function", id: "emails", name: "emails", file: "src/jobs.ts", exportName: "onEmail", source: "src/jobs.ts:1" },
+        ],
+      }),
+      opts,
+    );
+    // Still exactly one package.
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    const http = byId(entries, "http");
+    // The proxy registration is absent; crons + queues still register.
+    expect(http.contents).not.toContain("registerAzureHttp");
+    expect(http.contents).toContain(`registerAzureCron("poll", poll);`);
+    expect(http.contents).toContain(`registerAzureQueue("emails", onEmail);`);
+  });
+
   test("queues fold into the single http entry too, keyed by queue name", () => {
     const entries = generateEntries(
       baseIR({

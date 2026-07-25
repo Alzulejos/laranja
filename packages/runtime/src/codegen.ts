@@ -148,55 +148,48 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   const isGrouped = (h: HandlerRef & { workersId?: string }): boolean =>
     isNest && h.style === "method" && h.workersId !== undefined;
 
-  // HTTP proxy: one Lambda wrapping the whole app. Absent for workers-only apps.
-  // Express exports a ready app instance (createHttpHandler(app)); Nest exports an
-  // async bootstrap factory that returns the app (createNestHttpHandler(bootstrap)),
-  // and its shim imports the COMPILED bootstrap via `opts.httpEntry`.
-  if (ir.http) {
-    const local = isNest ? "bootstrap" : "app";
-    const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
-    const httpSpec = importSpecifier(opts.entryDir, httpTarget);
-    const appImport = importBinding(local, ir.http.appExport, httpSpec);
-
-    // Azure has no handler export to look up: the Functions host discovers
-    // functions by loading the package and reading what it registered. So the
-    // shim REGISTERS (a side effect at module top level) instead of exporting.
-    // `handlerExport` is left empty to say so.
-    if (ir.app.provider === "azure") {
-      if (isNest) {
-        throw new Error(
-          `Azure support is Express-only today — this project's http() marker is a NestJS bootstrap.\n` +
-            `  Deploy to AWS (provider: "aws") for now; Azure + NestJS is the next step.`,
-        );
-      }
-      // Azure hosts EVERY function in ONE package: the HTTP proxy plus each cron's
-      // timer all register (as side effects) from this single entry, and the host
-      // discovers them by loading it. So crons are folded in here rather than
-      // emitted as separate entries — which is also why the cron loop below skips
-      // Azure and the whole app keeps one asset (keyed "http") end to end.
-      const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
+  // Azure hosts the WHOLE app in ONE package: the HTTP proxy (if any), each cron's
+  // timer, and each queue's trigger all register as side effects from this single
+  // entry, and the Functions host discovers them by loading it (there's no handler
+  // symbol to export — `handlerExport` is empty). So crons/queues are folded in here
+  // rather than emitted separately, the standalone loops below skip Azure, and the
+  // whole app keeps ONE asset (keyed "http", the package) end to end. http() is
+  // OPTIONAL — a crons/queues-only app deploys the same package minus the proxy.
+  if (ir.app.provider === "azure") {
+    if (isNest) {
+      throw new Error(
+        `Azure support is Express-only today — this project uses NestJS.\n` +
+          `  Deploy to AWS (provider: "aws") for now; Azure + NestJS is the next step.`,
+      );
+    }
+    const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
+    const runtimeImports = new Set<string>();
+    const registrations: string[] = [];
+    if (ir.http) {
+      const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
+      const appImport = importBinding("app", ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
       userImports.set(appImport, appImport);
-      const runtimeImports = new Set<string>(["registerAzureHttp"]);
-      const registrations = [`registerAzureHttp(${local});`];
-      for (const cron of ir.crons) {
-        // workersId (Nest method) crons are rejected upstream; these are standalone.
-        const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
-        const { importLine, factoryArgs } = handlerWiring(cron, spec);
-        // Dedupe: several methods on one class share a single class import.
-        userImports.set(importLine, importLine);
-        runtimeImports.add("registerAzureCron");
-        registrations.push(`registerAzureCron(${JSON.stringify(cron.id)}, ${factoryArgs});`);
-      }
-      // Queues fold into the same package, exactly like crons: each registers a
-      // Storage-Queue trigger as a side effect. workersId (Nest method) queues are
-      // rejected upstream, so these are all standalone.
-      for (const queue of ir.queues) {
-        const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
-        const { importLine, factoryArgs } = handlerWiring(queue, spec);
-        userImports.set(importLine, importLine);
-        runtimeImports.add("registerAzureQueue");
-        registrations.push(`registerAzureQueue(${JSON.stringify(queue.name)}, ${factoryArgs});`);
-      }
+      runtimeImports.add("registerAzureHttp");
+      registrations.push(`registerAzureHttp(app);`);
+    }
+    for (const cron of ir.crons) {
+      // workersId (Nest method) crons are rejected upstream; these are standalone.
+      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
+      const { importLine, factoryArgs } = handlerWiring(cron, spec);
+      userImports.set(importLine, importLine); // dedupe: methods on one class share an import
+      runtimeImports.add("registerAzureCron");
+      registrations.push(`registerAzureCron(${JSON.stringify(cron.id)}, ${factoryArgs});`);
+    }
+    for (const queue of ir.queues) {
+      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
+      const { importLine, factoryArgs } = handlerWiring(queue, spec);
+      userImports.set(importLine, importLine);
+      runtimeImports.add("registerAzureQueue");
+      registrations.push(`registerAzureQueue(${JSON.stringify(queue.name)}, ${factoryArgs});`);
+    }
+    // Scanner guarantees at least one of http/crons/queues, so registrations is
+    // non-empty; the guard keeps the emit honest rather than shipping an empty file.
+    if (registrations.length > 0) {
       entries.push({
         id: "http",
         kind: "http",
@@ -208,20 +201,26 @@ import { ${[...runtimeImports].join(", ")} } from "@alzulejos/laranja-runtime";
 ${registrations.join("\n")}
 `,
       });
-    } else {
-      const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
-      entries.push({
-        id: "http",
-        kind: "http",
-        fileName: "http.ts",
-        handlerExport: "handler",
-        contents: `${appImport}
+    }
+  } else if (ir.http) {
+    // AWS: the HTTP proxy is its own Lambda wrapping the whole app. Express exports a
+    // ready app instance (createHttpHandler(app)); Nest exports an async bootstrap
+    // factory (createNestHttpHandler(bootstrap)) and imports the COMPILED bootstrap.
+    const local = isNest ? "bootstrap" : "app";
+    const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
+    const appImport = importBinding(local, ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
+    const factory = isNest ? "createNestHttpHandler" : "createHttpHandler";
+    entries.push({
+      id: "http",
+      kind: "http",
+      fileName: "http.ts",
+      handlerExport: "handler",
+      contents: `${appImport}
 import { ${factory} } from "@alzulejos/laranja-runtime";
 
 export const handler = ${factory}(${local});
 `,
-      });
-    }
+    });
   }
 
   // Worker Lambdas: one per `workers()` module, hosting all its grouped (method-

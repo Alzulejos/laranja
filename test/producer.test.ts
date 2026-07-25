@@ -132,17 +132,21 @@ describe("getQueue().send() on Azure", () => {
     delete process.env[URI];
   });
 
-  test("enqueues to the Storage Queue named by the env target, returns the messageId", async () => {
+  // The Azure Functions queue trigger decodes base64 by default, so the producer
+  // base64-encodes; the consumer receives the original body decoded.
+  const b64 = (s: string) => Buffer.from(s, "utf8").toString("base64");
+
+  test("enqueues the base64-encoded body to the named queue, returns the messageId", async () => {
     const out = await getQueue("emails").send({ hi: 1 });
     expect(getQueueClientSpy).toHaveBeenCalledWith("emails");
-    expect(azureSendSpy).toHaveBeenCalledWith(JSON.stringify({ hi: 1 }), { visibilityTimeout: undefined });
+    expect(azureSendSpy).toHaveBeenCalledWith(b64(JSON.stringify({ hi: 1 })), { visibilityTimeout: undefined });
     expect(out).toEqual({ messageId: "az-1" });
     expect(sendSpy).not.toHaveBeenCalled(); // never reaches SQS
   });
 
-  test("sends a string as-is and maps delaySeconds to the message visibilityTimeout", async () => {
+  test("base64-encodes a string body and maps delaySeconds to the message visibilityTimeout", async () => {
     await getQueue("emails").send("raw-body", { delaySeconds: 45 });
-    expect(azureSendSpy).toHaveBeenCalledWith("raw-body", { visibilityTimeout: 45 });
+    expect(azureSendSpy).toHaveBeenCalledWith(b64("raw-body"), { visibilityTimeout: 45 });
   });
 
   test("throws when the queue service endpoint isn't in env", async () => {

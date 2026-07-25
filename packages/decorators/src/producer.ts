@@ -130,7 +130,13 @@ async function sendAzure(
   ]);
   azureQueueService ??= new QueueServiceClient(serviceUri, new DefaultAzureCredential());
   const client = azureQueueService.getQueueClient(queueName);
-  const out = await client.sendMessage(body, {
+  // BASE64: the Azure Functions Storage Queue TRIGGER decodes messages as base64 by
+  // default (its `QueueMessageEncoding` default), but `@azure/storage-queue` sends
+  // text as-is. A raw-JSON message therefore fails to decode at the binding layer —
+  // the host retries and dead-letters to `<queue>-poison` WITHOUT ever invoking the
+  // consumer (no function execution, no handler error). Encoding here makes the
+  // producer match the trigger, so the consumer receives the original body decoded.
+  const out = await client.sendMessage(Buffer.from(body, "utf8").toString("base64"), {
     visibilityTimeout: options.delaySeconds,
   });
   return { messageId: out.messageId };

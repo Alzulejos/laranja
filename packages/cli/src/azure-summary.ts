@@ -80,32 +80,36 @@ export function buildAzureResources(args: {
   appName: string;
   stage: string;
   monitoring: boolean;
+  /** Whether the app has an http() proxy — false for a crons/queues-only Azure app. */
+  hasHttp: boolean;
   target: { subscriptionId: string; resourceGroup: string };
   crons: InfraIR["crons"];
   queues: InfraIR["queues"];
   missingEnv: string[];
   action: "CREATED" | "UPDATED";
 }): DeployedResource[] {
-  const { name, appName, stage, monitoring, target, crons, queues, missingEnv, action } = args;
+  const { name, appName, stage, monitoring, hasHttp, target, crons, queues, missingEnv, action } = args;
   const rgId = `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}`;
   const appId = `${rgId}/providers/Microsoft.Web/sites/${name}`;
   // Each function is individually addressable under the app; this is the id that
   // maps a resource row to the specific function it triggers.
   const functionId = (fnName: string) => `${appId}/functions/${fnName}`;
 
-  const resources: DeployedResource[] = [
-    {
-      // "http" is the logical name the AWS path uses for the proxy; keeping it
-      // means the dashboard renders an Azure deploy the same way. The underlying
-      // function is `AZURE_HTTP_FUNCTION_NAME` (the shim registers `app.http` with it).
+  const resources: DeployedResource[] = [];
+  if (hasHttp) {
+    // "http" is the logical name the AWS path uses for the proxy; keeping it means
+    // the dashboard renders an Azure deploy the same way. The underlying function is
+    // `AZURE_HTTP_FUNCTION_NAME` (the shim registers `app.http` with it). Absent for
+    // a crons/queues-only app, which has no http function.
+    resources.push({
       name: "http",
       type: "http",
       action,
-      metadata: missingEnv.length ? { warnings: [`env with no value: ${missingEnv.join(", ")}`] } : {},
+      metadata: {},
       externalId: functionId(AZURE_HTTP_FUNCTION_NAME),
       externalUrl: azureFunctionUrl(name),
-    },
-  ];
+    });
+  }
 
   for (const cron of crons) {
     // The timer function is registered under the cron id (see registerAzureCron).
@@ -133,6 +137,16 @@ export function buildAzureResources(args: {
       externalId: functionId(queue.name),
       externalUrl: null,
     });
+  }
+
+  // Missing env is an APP-level warning (all functions share one Function App's
+  // settings). Surface it on the first function resource — the http proxy when
+  // present, otherwise the first cron/queue — so it's visible and never dropped.
+  if (missingEnv.length && resources[0]) {
+    resources[0].metadata = {
+      ...resources[0].metadata,
+      warnings: [`env with no value: ${missingEnv.join(", ")}`],
+    };
   }
 
   // Observability node — mirrors the AWS "monitoring" dashboard row (report.ts).

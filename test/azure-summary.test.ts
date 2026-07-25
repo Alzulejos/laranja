@@ -41,6 +41,7 @@ describe("azure reported resources", () => {
       appName: "shop",
       stage: "dev",
       monitoring: false,
+      hasHttp: true,
       target,
       crons: [],
       queues: [],
@@ -61,6 +62,7 @@ describe("azure reported resources", () => {
       appName: "shop",
       stage: "dev",
       monitoring: false,
+      hasHttp: true,
       target,
       crons,
       queues: [],
@@ -92,6 +94,7 @@ describe("azure reported resources", () => {
       appName: "shop",
       stage: "dev",
       monitoring: false,
+      hasHttp: true,
       target,
       crons: [],
       queues: [queue("emails"), queue("sms")],
@@ -118,6 +121,7 @@ describe("azure reported resources", () => {
       appName: "shop",
       stage: "dev",
       monitoring: false,
+      hasHttp: true,
       target,
       crons: [cron("poll", { kind: "rate", value: 1, unit: "hour" })],
       queues: [],
@@ -134,6 +138,7 @@ describe("azure reported resources", () => {
       appName: "shop",
       stage: "dev",
       monitoring: true,
+      hasHttp: true,
       target,
       crons: [],
       queues: [],
@@ -149,12 +154,32 @@ describe("azure reported resources", () => {
     expect(mon.externalUrl).toBe(`https://portal.azure.com/#@/resource${aiId}/overview`);
   });
 
+  test("a crons/queues-only app (no http) reports no http row", () => {
+    const resources = buildAzureResources({
+      name: "shop-dev",
+      appName: "shop",
+      stage: "dev",
+      monitoring: false,
+      hasHttp: false,
+      target,
+      crons: [cron("poll", { kind: "rate", value: 5, unit: "minute" })],
+      queues: [queue("emails")],
+      missingEnv: ["DATABASE_URL"],
+      action: "CREATED",
+    });
+    // No http row — just the cron + queue functions.
+    expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["cron:poll", "queue:emails"]);
+    // The app-level missing-env warning still surfaces — on the first function.
+    expect(resources[0].metadata.warnings).toEqual(["env with no value: DATABASE_URL"]);
+  });
+
   test("monitoring off emits no dashboard row", () => {
     const resources = buildAzureResources({
       name: "shop-dev",
       appName: "shop",
       stage: "dev",
       monitoring: false,
+      hasHttp: true,
       target,
       crons: [],
       queues: [],

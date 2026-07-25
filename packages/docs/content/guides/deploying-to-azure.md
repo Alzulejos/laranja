@@ -12,8 +12,9 @@ code and ships the infrastructure — only the back half targets Azure instead.
 
 > **What's supported today:** **Express** apps with **HTTP**, **crons** (`@Cron` /
 > `cron()`), **queues** (`@Queue` / `queue()`, backed by Azure Storage Queues —
-> [FIFO is AWS-only](#queues)), and **environment variables**. **NestJS** is AWS-only
-> for now — it's a fast-follow. Deploy NestJS workloads to AWS in the meantime.
+> [FIFO is AWS-only](#queues)), and **environment variables**. `http()` is **optional**
+> — a **crons/queues-only** app (no HTTP endpoint) deploys just fine. **NestJS** is
+> AWS-only for now — it's a fast-follow. Deploy NestJS workloads to AWS in the meantime.
 
 ## Prerequisites
 
@@ -141,14 +142,16 @@ A few AWS-specific queue options don't map to a Storage Queue trigger and are
 
 ## What gets deployed
 
-A single **Function App** on the Flex Consumption plan hosts your Express app —
-and any crons and queue consumers, as functions in that same app — alongside the
-resources it needs, all inside your resource group:
+A single **Function App** on the Flex Consumption plan hosts your app — the HTTP
+proxy (if you declared `http()`), plus any crons and queue consumers, all as
+functions in that same app — alongside the resources it needs, inside your resource
+group:
 
 - a **Function App** (`Microsoft.Web/sites`) + its Flex Consumption plan, hosting
-  your HTTP proxy, one **timer function per cron**, and one **queue-triggered
-  function per queue** (crons and queues add no compute of their own — they're
-  functions inside this app),
+  your HTTP proxy (when present), one **timer function per cron**, and one
+  **queue-triggered function per queue** (crons and queues add no compute of their
+  own — they're functions inside this app). A **crons/queues-only** app has no HTTP
+  function; the app still gets a hostname, but nothing serves on it,
 - a **storage account** for the deployment package **and your queues**
   (`Microsoft.Storage/…/queueServices/queues`, one per declared queue),
 - **Application Insights** + a **Log Analytics workspace** that back

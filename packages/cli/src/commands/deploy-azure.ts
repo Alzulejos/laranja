@@ -175,8 +175,12 @@ export async function deployAzure(
     throw err;
   }
 
-  console.log();
-  ui.step("🌐", "http", azureFunctionUrl(names.functionApp));
+  // Only a project with an http() app has a public URL worth printing; a
+  // crons/queues-only app has a Function App hostname but nothing serving on it.
+  if (ir.http) {
+    console.log();
+    ui.step("🌐", "http", azureFunctionUrl(names.functionApp));
+  }
 
   step("report success");
   const resources = buildAzureResources({
@@ -184,6 +188,7 @@ export async function deployAzure(
     appName: ir.app.name,
     stage: ir.app.stage,
     monitoring: ir.app.monitoring,
+    hasHttp: Boolean(ir.http),
     target,
     crons: ir.crons,
     queues: ir.queues,

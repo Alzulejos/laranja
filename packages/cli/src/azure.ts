@@ -470,6 +470,10 @@ export async function queryAppLogs(
   const kql =
     `AppTraces ` +
     `| where TimeGenerated > datetime(${floorIso}) ` +
+    // Flex Consumption emits a "Host Status: {…}" health-check trace every ~2s. Left
+    // in, hundreds of these fill the `top 500` window and EVICT real function output
+    // (a user's console.log), besides spamming the tail. Drop them at the source.
+    `| where Message !startswith "Host Status" ` +
     `| extend _cat = tostring(Properties["Category"]) ` +
     `| extend fn = iff(_cat startswith "Function.", extract(@"Function\\.([^.]+)", 1, _cat), tostring(OperationName)) ` +
     filter +

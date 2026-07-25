@@ -164,8 +164,15 @@ export async function deployAzure(
   const up = ui.spinner("publishing app");
   try {
     // One deploy is the ONLY method Flex Consumption supports — it makes the
-    // package the app's ACTIVE deployment (a dropped blob is ignored).
-    await oneDeployPublish({ functionApp: names.functionApp, zipPath });
+    // package the app's ACTIVE deployment (a dropped blob is ignored). On a fresh
+    // (or destroy+recreated) app, the identity's storage role may still be
+    // propagating — the publish retries through that rather than failing the deploy.
+    await oneDeployPublish({
+      functionApp: names.functionApp,
+      zipPath,
+      onRetry: ({ attempt, delaySeconds }) =>
+        up.update(`waiting for storage permissions to propagate — retry ${attempt} in ${delaySeconds}s`),
+    });
     up.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
   } catch (err) {
     up.fail("publish failed");

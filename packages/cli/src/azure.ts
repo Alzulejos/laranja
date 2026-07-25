@@ -270,11 +270,47 @@ function toArmParameters(parameters: Record<string, string>): Record<string, { v
  * `RemoteBuild=false`: we already bundled + shipped node_modules, so there's
  * nothing for Oryx to build.
  */
+/** Backoff schedule (seconds) for retrying a publish that races RBAC propagation. */
+const PUBLISH_PROPAGATION_BACKOFFS = [15, 30, 45, 60, 60];
+
+/**
+ * A publish 403 that means "the app's new managed identity can't reach storage YET".
+ *
+ * A `destroy` + `deploy` gives the Function App a brand-new system-assigned identity;
+ * ARM grants it Storage Blob Data Owner in seconds, but the storage DATA PLANE takes
+ * minutes to honor it. One-deploy runs right after ARM, so the first attempts race
+ * that propagation and fail with these signatures. They're transient — retry them,
+ * and ONLY them (a genuine misconfig would never clear).
+ */
+function isStoragePropagationError(msg: string): boolean {
+  return /InaccessibleStorage|BlobUploadFailed|not authorized to perform this operation|AuthorizationPermissionMismatch|\b403\b/i.test(
+    msg,
+  );
+}
+
 export async function oneDeployPublish(args: {
   functionApp: string;
   zipPath: string;
+  /** Notified before each backoff wait, so the caller can surface progress. */
+  onRetry?: (info: { attempt: number; delaySeconds: number; reason: string }) => void;
 }): Promise<void> {
-  const { functionApp, zipPath } = args;
+  const { functionApp, zipPath, onRetry } = args;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await attemptPublish(functionApp, zipPath);
+      return;
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (attempt >= PUBLISH_PROPAGATION_BACKOFFS.length || !isStoragePropagationError(msg)) throw err;
+      const delaySeconds = PUBLISH_PROPAGATION_BACKOFFS[attempt];
+      onRetry?.({ attempt: attempt + 1, delaySeconds, reason: msg });
+      await new Promise((r) => setTimeout(r, delaySeconds * 1000));
+    }
+  }
+}
+
+/** One publish attempt: POST the zip to Kudu one-deploy and await the result. */
+async function attemptPublish(functionApp: string, zipPath: string): Promise<void> {
   const token = await managementToken();
   const zip = readFileSync(zipPath);
 

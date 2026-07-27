@@ -26,6 +26,7 @@ import {
   deleteResourceById,
   deleteRoleAssignmentsForPrincipal,
   functionAppPrincipalId,
+  listAzureResourceNames,
   managementToken,
   resourceId,
 } from "../azure.js";
@@ -95,16 +96,32 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     patchDeployment(deploymentId, { status: "STARTED", region }, apiKey, projectId),
   );
 
-  // Capture the app's principal BEFORE deleting it — the role assignments are
+  // A project deploys one Function App per workload, so discover them from the group
+  // rather than deriving from config: that also reclaims a `workers()` root's app after
+  // the root is renamed or deleted from the source, which name-derivation would orphan.
+  // `site` is the primary app's name and every other is `<site>-<slug>`; the trailing
+  // hyphen keeps a sibling project ("shop-development") out of "shop-dev"'s sweep.
+  const owns = (name: string): boolean => name === site || name.startsWith(`${site}-`);
+  const discovered = await listAzureResourceNames(target, "Microsoft.Web", "sites", "2023-12-01");
+  const sites = discovered.filter(owns);
+  // Fall back to the derived name when discovery returns nothing (no permission to
+  // list, say) so destroy still does its job rather than silently deleting nothing.
+  if (sites.length === 0) sites.push(site);
+  const plans = (await listAzureResourceNames(target, "Microsoft.Web", "serverfarms", "2023-12-01")).filter(owns);
+  if (plans.length === 0) plans.push(plan);
+
+  // Capture each app's principal BEFORE deleting it — the role assignments are
   // named with ARM guids we can't reproduce, so they're found by principal, and
   // the principal is only readable while the app still exists.
-  const principalId = await functionAppPrincipalId(target, site);
+  const principalIds = (await Promise.all(sites.map((s) => functionAppPrincipalId(target, s)))).filter(
+    (p): p is string => Boolean(p),
+  );
 
-  // Order matters: the app first (it holds the plan and reads the storage), then
-  // its dependencies. Each returns false if already gone, so a re-run is safe.
+  // Order matters: the apps first (they hold the plans and read the storage), then
+  // their dependencies. Each returns false if already gone, so a re-run is safe.
   const targets: [string, string, string, string][] = [
-    ["Microsoft.Web", "sites", site, "2023-12-01"],
-    ["Microsoft.Web", "serverfarms", plan, "2023-12-01"],
+    ...sites.map((s): [string, string, string, string] => ["Microsoft.Web", "sites", s, "2023-12-01"]),
+    ...plans.map((p): [string, string, string, string] => ["Microsoft.Web", "serverfarms", p, "2023-12-01"]),
     ["Microsoft.Storage", "storageAccounts", storage, "2023-05-01"],
     // App Insights before its workspace: the component references the workspace.
     ["Microsoft.Insights", "components", insights, "2020-02-02"],
@@ -120,7 +137,8 @@ export async function destroyAzure(projectDir: string, opts: { stage?: string } 
     }
     // Clean up the RBAC grants — deleting the storage account doesn't cascade
     // them, so they'd otherwise linger as orphans referencing a deleted identity.
-    if (principalId) {
+    // One identity per app, so every app's grants have to be swept.
+    for (const principalId of principalIds) {
       const n = await deleteRoleAssignmentsForPrincipal(target, principalId);
       if (n) removed.push(`${n} role assignment(s)`);
     }

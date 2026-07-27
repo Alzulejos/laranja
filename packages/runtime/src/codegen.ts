@@ -1,4 +1,5 @@
 import path from "node:path";
+import { azureWorkloads } from "@alzulejos/laranja-core";
 import type { CronIR, HandlerRef, InfraIR, QueueIR, WorkersIR } from "@alzulejos/laranja-core";
 
 /**
@@ -153,96 +154,105 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   const isGrouped = (h: HandlerRef & { workersId?: string }): boolean =>
     isNest && h.style === "method" && h.workersId !== undefined;
 
-  // Azure hosts the WHOLE app in ONE package: the HTTP proxy (if any), each cron's
-  // timer, and each queue's trigger all register as side effects from this single
-  // entry, and the Functions host discovers them by loading it (there's no handler
-  // symbol to export — `handlerExport` is empty). So crons/queues are folded in here
-  // rather than emitted separately, the standalone loops below skip Azure, and the
-  // whole app keeps ONE asset (keyed "http", the package) end to end. http() is
-  // OPTIONAL — a crons/queues-only app deploys the same package minus the proxy.
+  // Azure deploys one package per WORKLOAD (`azureWorkloads`): the http() app plus
+  // every handler needing no DI in one, and each `workers()` root in its own. Within a
+  // package the Functions host discovers functions by LOADING it and reading what
+  // registered as a side effect — there's no handler symbol, so `handlerExport` is
+  // empty and each trigger registers itself. A project without `workers()` roots is a
+  // single workload, so it emits exactly one entry, as it always did. The AWS-shaped
+  // loops below skip Azure entirely.
   if (ir.app.provider === "azure") {
-    const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
-    const runtimeImports = new Set<string>();
-    const contextDecls: string[] = [];
-    const registrations: string[] = [];
+    const cronById = new Map(ir.crons.map((c) => [c.id, c]));
+    const queueByName = new Map(ir.queues.map((q) => [q.name, q]));
+    const workerById = new Map(workers.map((w) => [w.id, w]));
 
-    // Class-based Nest crons/queues resolve their provider through DI. Azure can't
-    // consolidate them the way an AWS worker Lambda does — the trigger IS the
-    // function, so a workers() root with five crons stays five registrations — but
-    // they all run in ONE Function App process, so they share a single memoized
-    // container PER ROOT. That's exactly what the AWS dispatcher buys by
-    // consolidating, minus the dispatcher: the DI graph is built at most once per
-    // root, by whichever trigger fires first, and a cron in root A never boots B.
-    const grouped = [...ir.crons, ...ir.queues].filter(isGrouped);
-    const contextVars = new Map<string, string>(); // workersId -> local context name
-    if (grouped.length > 0) {
-      const resolve = opts.resolveCompiled;
-      if (!resolve) {
-        throw new Error(
-          `Cannot generate the Azure worker registrations: missing the compiled Nest ` +
-            `build. Build your app first (e.g. \`npm run build\`).`,
-        );
-      }
-      runtimeImports.add("nestContext");
-      for (const w of workers) {
-        if (!grouped.some((h) => h.workersId === w.id)) continue;
-        const moduleLocal = `workersModule_${ident(w.id)}`;
-        const moduleImport = importBinding(
-          moduleLocal,
-          w.appExport,
-          importSpecifier(opts.entryDir, resolve(w.handlerEntry)),
-        );
-        userImports.set(moduleImport, moduleImport);
-        const ctx = `context_${ident(w.id)}`;
-        contextVars.set(w.id, ctx);
-        contextDecls.push(`const ${ctx} = nestContext(() => NestFactory.createApplicationContext(${moduleLocal}));`);
-      }
-    }
-    /** The shared container for a grouped handler's DI root. */
-    const contextFor = (h: { id: string; workersId?: string }): string => {
-      const ctx = h.workersId === undefined ? undefined : contextVars.get(h.workersId);
-      if (!ctx) throw new Error(`Internal: "${h.id}" has no workers() root to resolve against.`);
-      return ctx;
-    };
     /** Grouped handlers import the COMPILED provider (DI metadata intact); standalone
      *  ones need no metadata and bundle from source, as they do on AWS. */
     const handlerSpec = (h: { file: string }, isDi: boolean): string =>
       importSpecifier(opts.entryDir, isDi ? opts.resolveCompiled!(h.file) : path.join(opts.projectDir, h.file));
 
-    if (ir.http) {
-      const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
-      // Express exports a ready app instance; Nest exports an async bootstrap factory
-      // and imports the COMPILED bootstrap — the same split the AWS branch makes
-      // between createHttpHandler and createNestHttpHandler.
-      const local = isNest ? "bootstrap" : "app";
-      const register = isNest ? "registerAzureNestHttp" : "registerAzureHttp";
-      const appImport = importBinding(local, ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
-      userImports.set(appImport, appImport);
-      runtimeImports.add(register);
-      registrations.push(`${register}(${local});`);
-    }
-    for (const cron of ir.crons) {
-      const di = isGrouped(cron);
-      const { importLine, factoryArgs } = handlerWiring(cron, handlerSpec(cron, di));
-      userImports.set(importLine, importLine); // dedupe: methods on one class share an import
-      const register = di ? "registerAzureNestCron" : "registerAzureCron";
-      const args = di ? `${contextFor(cron)}, ${factoryArgs}` : factoryArgs;
-      runtimeImports.add(register);
-      registrations.push(`${register}(${JSON.stringify(cron.id)}, ${args});`);
-    }
-    for (const queue of ir.queues) {
-      const di = isGrouped(queue);
-      const { importLine, factoryArgs } = handlerWiring(queue, handlerSpec(queue, di));
-      userImports.set(importLine, importLine);
-      const register = di ? "registerAzureNestQueue" : "registerAzureQueue";
-      const args = di ? `${contextFor(queue)}, ${factoryArgs}` : factoryArgs;
-      runtimeImports.add(register);
-      // Keyed by NAME, not id — the key the trigger binding and the producer share.
-      registrations.push(`${register}(${JSON.stringify(queue.name)}, ${args});`);
-    }
-    // Scanner guarantees at least one of http/crons/queues, so registrations is
-    // non-empty; the guard keeps the emit honest rather than shipping an empty file.
-    if (registrations.length > 0) {
+    for (const w of azureWorkloads(ir)) {
+      const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
+      const runtimeImports = new Set<string>();
+      const contextDecls: string[] = [];
+      const registrations: string[] = [];
+
+      // A workers() workload builds its root's DI container ONCE, memoized at module
+      // scope and shared by every trigger in this package. Azure can't consolidate the
+      // triggers themselves — the trigger IS the function, so five crons stay five
+      // registrations — but they all run in this one app's process, so they resolve
+      // against one container. That's what the AWS dispatcher buys by consolidating,
+      // minus the dispatcher. Separate workloads keep roots isolated: this package
+      // contains only its own module, so it can never boot another root's.
+      let contextVar: string | undefined;
+      if (w.workersId !== undefined) {
+        const root = workerById.get(w.workersId);
+        const resolve = opts.resolveCompiled;
+        if (!root || !resolve) {
+          throw new Error(
+            `Cannot generate the Azure shim for "${w.id}": missing the compiled Nest ` +
+              `build. Build your app first (e.g. \`npm run build\`).`,
+          );
+        }
+        const moduleLocal = `workersModule_${ident(root.id)}`;
+        const moduleImport = importBinding(
+          moduleLocal,
+          root.appExport,
+          importSpecifier(opts.entryDir, resolve(root.handlerEntry)),
+        );
+        userImports.set(moduleImport, moduleImport);
+        contextVar = `context_${ident(root.id)}`;
+        runtimeImports.add("nestContext");
+        contextDecls.push(
+          `const ${contextVar} = nestContext(() => NestFactory.createApplicationContext(${moduleLocal}));`,
+        );
+      }
+
+      /** The container a DI-bound handler resolves through. */
+      const contextFor = (h: { id: string }): string => {
+        if (!contextVar) throw new Error(`Internal: "${h.id}" has no workers() root to resolve against.`);
+        return contextVar;
+      };
+
+      if (w.http && ir.http) {
+        const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
+        // Express exports a ready app instance; Nest exports an async bootstrap factory
+        // and imports the COMPILED bootstrap — the same split the AWS branch makes
+        // between createHttpHandler and createNestHttpHandler.
+        const local = isNest ? "bootstrap" : "app";
+        const register = isNest ? "registerAzureNestHttp" : "registerAzureHttp";
+        const appImport = importBinding(local, ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
+        userImports.set(appImport, appImport);
+        runtimeImports.add(register);
+        registrations.push(`${register}(${local});`);
+      }
+      for (const id of w.cronIds) {
+        const cron = cronById.get(id);
+        if (!cron) continue;
+        const di = isGrouped(cron);
+        const { importLine, factoryArgs } = handlerWiring(cron, handlerSpec(cron, di));
+        userImports.set(importLine, importLine); // dedupe: methods on one class share an import
+        const register = di ? "registerAzureNestCron" : "registerAzureCron";
+        const args = di ? `${contextFor(cron)}, ${factoryArgs}` : factoryArgs;
+        runtimeImports.add(register);
+        registrations.push(`${register}(${JSON.stringify(cron.id)}, ${args});`);
+      }
+      for (const name of w.queueNames) {
+        const queue = queueByName.get(name);
+        if (!queue) continue;
+        const di = isGrouped(queue);
+        const { importLine, factoryArgs } = handlerWiring(queue, handlerSpec(queue, di));
+        userImports.set(importLine, importLine);
+        const register = di ? "registerAzureNestQueue" : "registerAzureQueue";
+        const args = di ? `${contextFor(queue)}, ${factoryArgs}` : factoryArgs;
+        runtimeImports.add(register);
+        // Keyed by NAME, not id — the key the trigger binding and the producer share.
+        registrations.push(`${register}(${JSON.stringify(queue.name)}, ${args});`);
+      }
+      // azureWorkloads only yields workloads that host something, so this holds; the
+      // guard keeps the emit honest rather than shipping a package with no functions.
+      if (registrations.length === 0) continue;
+
       // NestFactory comes from the USER's @nestjs/core, keeping this package
       // framework-agnostic — same arrangement as the AWS worker shim.
       const header = [
@@ -254,9 +264,12 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
         .join("\n");
       const body = [contextDecls.join("\n"), registrations.join("\n")].filter(Boolean).join("\n\n");
       entries.push({
-        id: "http",
-        kind: "http",
-        fileName: "http.ts",
+        id: w.id,
+        // The primary workload stays "http" even when it serves no http() app — it's
+        // the package the app's own handlers live in, and the id/kind pair is what the
+        // deploy path has always matched on.
+        kind: w.workersId === undefined ? "http" : "worker",
+        fileName: w.workersId === undefined ? "http.ts" : `worker-${safe(w.id)}.ts`,
         handlerExport: "",
         contents: `${header}\n\n${body}\n`,
       });

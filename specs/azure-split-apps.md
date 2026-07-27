@@ -138,10 +138,12 @@ Client and server must ship together regardless: the `/synth` response shape cha
 1. ✅ Naming + workload grouping in core (`azureWorkloads`, `azurePlanName` suffix),
    with tests in `test/azure-workloads.test.ts`.
 2. ✅ Server: N apps, per-app compute, `names.apps` map. 56 tests green.
-3. Client: codegen regrouping, per-entry `host.json` timeout, then the deploy loop.
-   ⚠️ **Until this lands, Azure deploys of projects WITH `workers()` roots fail** —
-   the server now expects one asset hash per workload and the client still builds one.
-   Projects without roots are a single workload and unaffected.
-4. The surrounding commands (`logs`, `destroy`, `eject`, summaries).
-5. Docs: rewrite "What gets deployed" and the "NestJS workers on Azure" section in
+3. ✅ Client: codegen emits one entry per workload; `bundleEntries` takes
+   `azureTimeoutsById`; `deploy-azure` zips and publishes each package **in parallel**
+   and names which apps did/didn't update on a partial failure.
+4. ✅ `destroy` and `logs` now DISCOVER this project's apps from the resource group
+   (`listAzureResourceNames`) instead of deriving one name from config — which also
+   reclaims a root's app after the root is renamed or deleted from the source.
+5. Remaining: `eject-azure` still emits a single-app `deploy.sh` + README.
+6. Docs: rewrite "What gets deployed" and the "NestJS workers on Azure" section in
    `guides/deploying-to-azure.md`, including the honest cold-start trade.

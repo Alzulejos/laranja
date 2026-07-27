@@ -7,6 +7,7 @@ import {
   ApiRequestError,
   apiErrorMessage,
   AZURE_DEFAULT_TIMEOUT_SECONDS,
+  azureWorkloads,
   type AzureHandlerAsset,
   type InfraIR,
 } from "@alzulejos/laranja-core";
@@ -39,6 +40,24 @@ interface BuildEnv {
   region?: string;
   account?: string;
   stage?: string;
+}
+
+/**
+ * Each Azure package's `host.json` timeout, keyed by the entry id the bundler writes.
+ *
+ * Mirrors the server's per-workload compute: a `workers()` root's package takes the
+ * root's `timeout`, everything else the http app's. Non-Azure projects get an empty
+ * map — their timeout is a Lambda property, set in the template, not in the package.
+ */
+function azureTimeouts(ir: InfraIR): Record<string, number> {
+  if (ir.app.provider !== "azure") return {};
+  const workerById = new Map((ir.workers ?? []).map((w) => [w.id, w]));
+  const timeouts: Record<string, number> = {};
+  for (const w of azureWorkloads(ir)) {
+    const compute = w.workersId !== undefined ? workerById.get(w.workersId)?.compute : ir.http?.compute;
+    timeouts[w.id] = compute?.timeout ?? AZURE_DEFAULT_TIMEOUT_SECONDS;
+  }
+  return timeouts;
 }
 
 /**
@@ -81,9 +100,11 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
     buildDir,
     projectDir,
     provider: ir.app.provider,
-    // Azure's function timeout lives in host.json, inside the package — so it
-    // must be known before bundling, since the package hash is computed here.
-    httpTimeoutSeconds: ir.http?.compute?.timeout ?? AZURE_DEFAULT_TIMEOUT_SECONDS,
+    // Azure's function timeout lives in host.json, inside the package — so it must be
+    // known before bundling, since the package hash is computed here. One value per
+    // workload: Azure deploys a package per Function App, so a `workers()` root's
+    // timeout only reaches it via its own package.
+    azureTimeoutsById: azureTimeouts(ir),
     // Ship the Azure producer SDK (it can't be bundled) only when queues exist.
     hasQueues: ir.queues.length > 0,
   });
@@ -143,7 +164,13 @@ export interface AzureRemoteAssembly {
   ir: InfraIR;
   template: Record<string, unknown>;
   assets: AzureHandlerAsset[];
-  names: { functionApp: string; storageAccount: string; container: string };
+  names: {
+    functionApp: string;
+    storageAccount: string;
+    container: string;
+    /** Each workload's Function App, keyed by asset id (see the synth response). */
+    apps?: Record<string, string>;
+  };
   warnings: { code: string; message: string }[];
   /** Absolute path to each handler's bundled output dir, keyed by handler id. */
   assetDirsById: Record<string, string>;

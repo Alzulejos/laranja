@@ -1,5 +1,5 @@
 import { app as functionsApp, type InvocationContext } from "@azure/functions";
-import { queueUrlEnvName } from "@alzulejos/laranja-core";
+import { queueUrlEnvName, azurePoisonQueueEnvName } from "@alzulejos/laranja-core";
 import type { Context, SQSRecord } from "aws-lambda";
 import { makeQueueConsumer, parseQueueBody, type QueueConsumer } from "./queue.js";
 import { resolveMethod, type NestContextFactory } from "./nest-worker.js";
@@ -7,15 +7,23 @@ import { resolveMethod, type NestContextFactory } from "./nest-worker.js";
 type Ctor<T> = new () => T;
 
 /**
- * Bind a consumer to a Storage-Queue-triggered function. Shared by the plain and
- * the Nest/DI-backed registrations so the trigger contract — the app-setting queue
- * binding and the identity-based connection below — lives in exactly one place.
+ * Bind a consumer to a Storage-Queue-triggered function. Shared by the plain, the
+ * Nest/DI-backed and the poison registrations so the trigger contract — the app-setting
+ * queue binding and the identity-based connection below — lives in exactly one place.
+ *
+ * `functionName` and `settingKey` are separate because a poison binding is a DIFFERENT
+ * physical queue from the function's own name: the trigger reads `<source>-poison` while
+ * the function is named for the source it drains.
  */
-function registerQueueTrigger(name: string, resolveConsumer: () => Promise<QueueConsumer>): void {
-  functionsApp.storageQueue(name, {
+function registerQueueTrigger(
+  functionName: string,
+  settingKey: string,
+  resolveConsumer: () => Promise<QueueConsumer>,
+): void {
+  functionsApp.storageQueue(functionName, {
     // `%…%` expands from app settings at load time; laranja-cdk sets this key to the
     // physical queue name. Same key the producer reads, so both sides target one queue.
-    queueName: `%${queueUrlEnvName(name)}%`,
+    queueName: `%${settingKey}%`,
     connection: "AzureWebJobsStorage",
     handler: async (queueEntry: unknown, context: InvocationContext) => {
       const consumer = await resolveConsumer();
@@ -61,7 +69,73 @@ export function registerAzureQueue<T extends object>(
       ? makeQueueConsumer(target as QueueConsumer)
       : makeQueueConsumer(target as Ctor<T>, method);
 
-  registerQueueTrigger(name, async () => consumer);
+  registerQueueTrigger(name, queueUrlEnvName(name), async () => consumer);
+}
+
+/**
+ * The function name for a source queue's poison drain. Derived, so the shim and the
+ * back half don't have to agree on anything beyond the source name — and unique within
+ * the app, since Azure gives each source exactly one poison queue.
+ */
+function poisonFunctionName(sourceQueueName: string): string {
+  return `${sourceQueueName}-poison`;
+}
+
+/**
+ * Drain a source queue's POISON queue into the consumer declared as its DLQ.
+ *
+ * Azure's dead-letter destination isn't configurable — the host always moves a message
+ * that failed `maxDequeueCount` times to `<queue>-poison`. But that's an ordinary
+ * Storage Queue, so binding a trigger on it delivers those failures into the handler the
+ * user declared via `dlq`. Without this the declared DLQ consumer receives nothing on
+ * Azure while failures accumulate unread.
+ *
+ * This is an ADDITIONAL registration: the DLQ queue keeps its own trigger and stays
+ * something you can `getQueue(...).send()` to. The consumer therefore sees both messages
+ * sent to it directly and messages drained from the source's poison queue.
+ */
+export function registerAzurePoisonQueue(sourceQueueName: string, handler: QueueConsumer): void;
+export function registerAzurePoisonQueue<T extends object>(
+  sourceQueueName: string,
+  Ctor: Ctor<T>,
+  method: keyof T & string,
+): void;
+export function registerAzurePoisonQueue<T extends object>(
+  sourceQueueName: string,
+  target: Ctor<T> | QueueConsumer,
+  method?: keyof T & string,
+): void {
+  const consumer =
+    method === undefined
+      ? makeQueueConsumer(target as QueueConsumer)
+      : makeQueueConsumer(target as Ctor<T>, method);
+
+  registerQueueTrigger(
+    poisonFunctionName(sourceQueueName),
+    azurePoisonQueueEnvName(sourceQueueName),
+    async () => consumer,
+  );
+}
+
+/**
+ * The Nest counterpart to `registerAzurePoisonQueue`: drains a source's poison queue
+ * into a `@Queue` provider method resolved through the shared DI container.
+ */
+export function registerAzureNestPoisonQueue<T extends object>(
+  sourceQueueName: string,
+  contextFactory: NestContextFactory,
+  Ctor: new (...args: any[]) => T,
+  method: keyof T & string,
+): void {
+  let consumer: QueueConsumer | undefined;
+  registerQueueTrigger(
+    poisonFunctionName(sourceQueueName),
+    azurePoisonQueueEnvName(sourceQueueName),
+    async () => {
+      consumer ??= resolveMethod(await contextFactory(), Ctor, method, "@Queue") as QueueConsumer;
+      return consumer;
+    },
+  );
 }
 
 /**
@@ -84,7 +158,7 @@ export function registerAzureNestQueue<T extends object>(
   method: keyof T & string,
 ): void {
   let consumer: QueueConsumer | undefined;
-  registerQueueTrigger(name, async () => {
+  registerQueueTrigger(name, queueUrlEnvName(name), async () => {
     consumer ??= resolveMethod(await contextFactory(), Ctor, method, "@Queue") as QueueConsumer;
     return consumer;
   });

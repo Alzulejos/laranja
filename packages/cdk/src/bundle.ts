@@ -254,6 +254,13 @@ export interface BundleOptions {
    */
   azureTimeoutsById?: Record<string, number>;
   /**
+   * Resolved `maxDequeueCount` (the dead-letter retry ceiling), keyed by ENTRY id —
+   * Azure only. Host-wide per app and lives in the same in-package `host.json` as the
+   * timeout, so it's resolved per entry for the same reason. Missing ids leave Azure's
+   * default (5).
+   */
+  azureMaxDequeueById?: Record<string, number>;
+  /**
    * The app declares queues, so the runtime producer (`getQueue().send()`) may run.
    * Azure only: its Storage Queue SDK (`@azure/storage-queue`, via `@azure/identity`)
    * must NOT be esbuild-bundled — `@azure/storage-common` does
@@ -287,7 +294,11 @@ const AZURE_PRODUCER_SDKS = ["@azure/storage-queue", "@azure/identity"] as const
  * `host.json` carries the function TIMEOUT, which is not an ARM property — see
  * `buildAzureHostJson` in core for why it is built client-side.
  */
-function writeAzurePackageFiles(assetDir: string, timeoutSeconds: number): void {
+function writeAzurePackageFiles(
+  assetDir: string,
+  timeoutSeconds: number,
+  maxDequeueCount?: number,
+): void {
   const pkg = {
     name: "laranja-function",
     private: true,
@@ -298,7 +309,7 @@ function writeAzurePackageFiles(assetDir: string, timeoutSeconds: number): void 
   writeFileSync(path.join(assetDir, "package.json"), `${JSON.stringify(pkg, null, 2)}\n`);
   writeFileSync(
     path.join(assetDir, "host.json"),
-    `${JSON.stringify(buildAzureHostJson(timeoutSeconds), null, 2)}\n`,
+    `${JSON.stringify(buildAzureHostJson(timeoutSeconds, maxDequeueCount), null, 2)}\n`,
   );
 }
 
@@ -358,7 +369,11 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     if (natives.size > 0) copyNativeClosure(natives, assetDir);
     // Azure packages are a project the host inspects, not a bare file.
     if (isAzure) {
-      writeAzurePackageFiles(assetDir, opts.azureTimeoutsById?.[e.id] ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
+      writeAzurePackageFiles(
+        assetDir,
+        opts.azureTimeoutsById?.[e.id] ?? AZURE_DEFAULT_TIMEOUT_SECONDS,
+        opts.azureMaxDequeueById?.[e.id],
+      );
       // @azure/functions is external (see above), so it must physically exist in
       // the package's node_modules for the host to load the SAME instance the
       // shim registered against. Copy it plus its production closure.

@@ -132,13 +132,39 @@ guarantee, so a `fifo: true` queue (or a `.fifo` name) is **rejected at
 that workload to AWS. (True FIFO on Azure means Service Bus, which is a future
 option.)
 
+### Dead-lettering
+
+`dlq` works, by a different route than on AWS. A Storage Queue trigger can't
+dead-letter to a queue _you_ name — the host always moves a message that fails
+repeatedly to an automatic **`‹queue›-poison`** queue. That's a real queue, though, so
+laranja binds an extra trigger on it that drains into the consumer you declared as the
+`dlq`. Your handler receives the failures; only the queue they physically pass through
+differs.
+
+```ts
+resources: {
+  emails: { dlq: { queue: "emailsDLQ", maxReceiveCount: 3 } },
+}
+```
+
+On Azure that deploys `emails`, `emailsDLQ`, and `emails-poison`, with `emailsDLQ`'s
+consumer reading both its own queue and `emails-poison`. `emailsDLQ` stays a normal
+queue you can [send to](#queues) directly.
+
+Two limits worth knowing:
+
+- **One `dlq` per queue.** If two queues name the _same_ `dlq`, laranja **won't** wire
+  it up and warns instead — Azure gives each queue its own poison queue, and silently
+  delivering one source's failures while dropping the other's would be worse than
+  saying so. Give each queue its own `dlq` target.
+- **`maxReceiveCount` is per Function App**, not per queue (it's the host-wide
+  `maxDequeueCount`). Queues in the same app share one value; if two disagree, the first
+  wins and the other is warned about. Since each [`workers()` root gets its own
+  app](#nestjs-workers-on-azure), roots can carry different values.
+
 A few AWS-specific queue options don't map to a Storage Queue trigger and are
 **ignored with a warning** — the deploy still succeeds:
 
-- **`dlq`** — a Storage Queue trigger doesn't dead-letter to a queue _you_ name;
-  instead the host moves a message that fails repeatedly to an automatic
-  **`‹queue›-poison`** queue. So a configured `dlq` target is ignored, and poison
-  messages land in `‹queue›-poison` in the same storage account.
 - **`visibilityTimeout`**, **`maxBatchingWindow`**, **`reportBatchItemFailures`**,
   **`messageRetention`** are SQS/event-source knobs with no per-queue Storage Queue
   equivalent, and **`batchSize`** is a host-wide setting on Azure (not per-queue).

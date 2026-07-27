@@ -31,15 +31,6 @@ describe("azure codegen", () => {
     // Functions host discovers functions from the loaded package instead.
     expect(http.handlerExport).toBe("");
   });
-
-  test("NestJS on azure is refused rather than silently mis-bundled", () => {
-    const ir = azureIR();
-    ir.app.framework = "nest";
-    ir.http!.appExport = "bootstrap";
-    expect(() =>
-      generateEntries(ir, { projectDir: "/proj", entryDir: "/proj/.laranja/entries" }),
-    ).toThrow(/Express-only/);
-  });
 });
 
 describe("azure host.json", () => {

@@ -191,6 +191,89 @@ describe("azure shim (one package hosts http + crons)", () => {
   });
 });
 
+describe("azure + nest shim", () => {
+  const nestAzureApp = {
+    name: "app",
+    framework: "nest" as const,
+    provider: "azure" as const,
+    stage: "dev",
+    entry: "src/main.ts",
+  };
+  // Mirrors pipeline.ts: Nest shims point at the user's COMPILED build output, so the
+  // DI metadata their `tsc` emitted survives into the package.
+  const nestAzureOpts = {
+    projectDir,
+    entryDir,
+    httpEntry: "/proj/dist/main.js",
+    resolveCompiled: (file: string) => "/proj/dist/" + file.replace(/^src\//, "").replace(/\.ts$/, ".js"),
+  };
+
+  test("registers the async bootstrap, importing the compiled entry", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        http: { handlerEntry: "src/main.ts", appExport: "default", routes: [] },
+      }),
+      nestAzureOpts,
+    );
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    const http = byId(entries, "http");
+    // Side-effect registration, same as the Express Azure shim — no exported symbol.
+    expect(http.handlerExport).toBe("");
+    expect(http.contents).toContain(`import bootstrap from "../../dist/main";`);
+    expect(http.contents).toContain(`import { registerAzureNestHttp } from "@alzulejos/laranja-runtime";`);
+    // The factory, NOT a ready instance: registration is sync, bootstrap is deferred.
+    expect(http.contents).toContain(`registerAzureNestHttp(bootstrap);`);
+    expect(http.contents).not.toContain("registerAzureHttp(");
+  });
+
+  test("function-style crons/queues in a Nest app still fold into the one package", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        http: { handlerEntry: "src/main.ts", appExport: "default", routes: [] },
+        crons: [
+          { style: "function", id: "poll", schedule: "rate(5 minutes)", file: "src/jobs.ts", exportName: "poll", source: "src/jobs.ts:1" },
+        ],
+        queues: [
+          { style: "function", id: "emails", name: "emails", file: "src/jobs.ts", exportName: "onEmail", source: "src/jobs.ts:2" },
+        ],
+      }),
+      nestAzureOpts,
+    );
+    // No DI involved, so these need no worker boot path — one package, as on Express.
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    const http = byId(entries, "http");
+    expect(http.contents).toContain(`registerAzureNestHttp(bootstrap);`);
+    expect(http.contents).toContain(`registerAzureCron("poll", poll);`);
+    expect(http.contents).toContain(`registerAzureQueue("emails", onEmail);`);
+  });
+
+  test("class-based Nest crons are rejected with an actionable message", () => {
+    expect(() =>
+      generateEntries(
+        baseIR({
+          app: nestAzureApp,
+          workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
+          crons: [
+            {
+              style: "method",
+              id: "Tasks-sweep",
+              schedule: "rate(5 minutes)",
+              file: "src/tasks.service.ts",
+              className: "TasksService",
+              method: "sweep",
+              source: "src/tasks.service.ts:9",
+              workersId: "AppModule",
+            },
+          ],
+        }),
+        nestAzureOpts,
+      ),
+    ).toThrow(/"Tasks-sweep"[\s\S]*provider: "aws"/);
+  });
+});
+
 describe("queue shim", () => {
   test("function style wraps the exported consumer", () => {
     const entries = generateEntries(

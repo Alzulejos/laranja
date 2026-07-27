@@ -1,8 +1,26 @@
 import { app as functionsApp, type Timer, type InvocationContext } from "@azure/functions";
 import { azureCronScheduleSettingKey } from "@alzulejos/laranja-core";
-import { makeScheduledInvoker, type ScheduledFn } from "./scheduled.js";
+import { makeScheduledInvoker, type ScheduledFn, type ScheduledInvoker } from "./scheduled.js";
+import { resolveMethod, type NestContextFactory } from "./nest-worker.js";
 
 type Ctor<T> = new () => T;
+
+/**
+ * Bind an invoker to a timer-triggered function. Shared by the plain and the
+ * Nest/DI-backed registrations so the trigger contract — the app-setting schedule
+ * binding below — lives in exactly one place.
+ */
+function registerTimer(name: string, invoke: ScheduledInvoker): void {
+  functionsApp.timer(name, {
+    // `%…%` expands from app settings at trigger time; laranja-cdk sets this key
+    // to the NCRONTAB schedule. Keeping the schedule out of the package means a
+    // schedule change is an app-settings update, not a repackage.
+    schedule: `%${azureCronScheduleSettingKey(name)}%`,
+    handler: async (timer: Timer, context: InvocationContext) => {
+      await invoke(timer, context);
+    },
+  });
+}
 
 /**
  * Register a `cron()` / `@Cron` handler as a timer-triggered function on the
@@ -31,13 +49,27 @@ export function registerAzureCron<T extends object>(
       ? makeScheduledInvoker(target as ScheduledFn)
       : makeScheduledInvoker(target as Ctor<T>, method);
 
-  functionsApp.timer(name, {
-    // `%…%` expands from app settings at trigger time; laranja-cdk sets this key
-    // to the NCRONTAB schedule. Keeping the schedule out of the package means a
-    // schedule change is an app-settings update, not a repackage.
-    schedule: `%${azureCronScheduleSettingKey(name)}%`,
-    handler: async (timer: Timer, context: InvocationContext) => {
-      await invoke(timer, context);
-    },
+  registerTimer(name, invoke);
+}
+
+/**
+ * The Nest counterpart to `registerAzureCron`: a `@Cron` method whose provider
+ * resolves through DI rather than a bare `new`.
+ *
+ * `contextFactory` is the memoized `nestContext(...)` the shim shares across every
+ * function belonging to the same `workers()` root, so the module's container is
+ * built once per process no matter which trigger fires first. The resolved method
+ * is then cached for the life of the process, like the AWS handler's.
+ */
+export function registerAzureNestCron<T extends object>(
+  name: string,
+  contextFactory: NestContextFactory,
+  Ctor: new (...args: any[]) => T,
+  method: keyof T & string,
+): void {
+  let call: ((...args: unknown[]) => unknown) | undefined;
+  registerTimer(name, async (event, context) => {
+    call ??= resolveMethod(await contextFactory(), Ctor, method, "@Cron");
+    return await call(event, context);
   });
 }

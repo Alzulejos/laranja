@@ -15,11 +15,9 @@ code and ships the infrastructure — only the back half targets Azure instead.
 > [FIFO is AWS-only](#queues)), and **environment variables**. `http()` is **optional**
 > — a **crons/queues-only** app (no HTTP endpoint) deploys just fine.
 >
-> **NestJS** apps deploy their **HTTP** endpoint and **environment variables**, plus
-> function-style `cron()` / `queue()` handlers. Class-based `@Cron` / `@Queue`
-> handlers — the ones that resolve through a `workers()` dependency-injection root —
-> are still AWS-only and are the next step. Deploy those workloads to AWS in the
-> meantime.
+> **NestJS** apps get the same feature set, including class-based `@Cron` / `@Queue`
+> providers resolved through a [`workers()`](../reference/decorators-and-markers.md#workers)
+> dependency-injection root. FIFO queues remain AWS-only.
 
 ## Prerequisites
 
@@ -164,6 +162,28 @@ group:
 
 Everything is named after your `name` and `stage`, and torn down together by
 [`destroy`](../reference/commands.md#destroy).
+
+### NestJS workers on Azure
+
+If you use class-based `@Cron` / `@Queue` providers, one detail differs from AWS
+and is worth knowing when you read your metrics.
+
+On Azure a function is defined by its trigger — one function, one trigger — so a
+[`workers()`](../reference/decorators-and-markers.md#workers) root with five crons
+becomes **five functions**, not one. On AWS that same root becomes a single Lambda
+that routes internally.
+
+That isn't a downside. All those functions live in the one Function App and share a
+single process, so laranja builds each root's DI container **once** and every trigger
+belonging to it reuses that container — the same saving the AWS worker Lambda gets by
+consolidating. You also get finer-grained telemetry than on AWS: each cron and queue
+shows up as its own function in Application Insights and in
+[`laranja logs`](../reference/commands.md#logs), rather than being pooled under one
+worker.
+
+Declaring several roots still keeps them apart: a trigger in one root never boots
+another root's module. The one thing you don't get, unlike AWS's separate worker
+Lambdas, is process isolation — all your functions share the app's process and memory.
 
 ## Related
 

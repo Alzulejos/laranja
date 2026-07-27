@@ -27,11 +27,32 @@ export type NestContextFactory = () => NestContextLike | Promise<NestContextLike
 
 type Ctor<T> = new (...args: any[]) => T;
 
+/**
+ * Memoize a context factory so several callers share ONE container.
+ *
+ * On AWS the dispatcher owns the only reference and caches internally, so this
+ * isn't needed there. On Azure the trigger IS the function — a `workers()` root
+ * with five crons is five separate registrations — so the generated shim builds
+ * the memo once at module scope and hands the same factory to each of them. The
+ * module's DI graph is then built at most once per process, by whichever trigger
+ * fires first, which is what the AWS dispatcher buys by consolidating.
+ */
+export function nestContext(factory: NestContextFactory): NestContextFactory {
+  let pending: Promise<NestContextLike> | undefined;
+  return () =>
+    (pending ??= Promise.resolve(factory()).catch((err: unknown) => {
+      // A failed boot must not poison the process: clear the memo so the next
+      // trigger retries rather than replaying one rejection for its whole life.
+      pending = undefined;
+      throw err;
+    }));
+}
+
 /** Build (once) the context, resolve the provider, and pull the target method off it.
  *  `method` is a plain string (the dispatch tables carry `[Provider, "name"]`), so
  *  there's no compile-time `keyof` guard here — the runtime check below catches a
  *  bad name. */
-function resolveMethod<T extends object>(
+export function resolveMethod<T extends object>(
   ctx: NestContextLike,
   Ctor: Ctor<T>,
   method: string,

@@ -249,28 +249,101 @@ describe("azure + nest shim", () => {
     expect(http.contents).toContain(`registerAzureQueue("emails", onEmail);`);
   });
 
-  test("class-based Nest crons are rejected with an actionable message", () => {
-    expect(() =>
-      generateEntries(
-        baseIR({
-          app: nestAzureApp,
-          workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
-          crons: [
-            {
-              style: "method",
-              id: "Tasks-sweep",
-              schedule: "rate(5 minutes)",
-              file: "src/tasks.service.ts",
-              className: "TasksService",
-              method: "sweep",
-              source: "src/tasks.service.ts:9",
-              workersId: "AppModule",
-            },
-          ],
-        }),
-        nestAzureOpts,
-      ),
-    ).toThrow(/"Tasks-sweep"[\s\S]*provider: "aws"/);
+  test("class-based crons/queues register against ONE shared context per root", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
+        crons: [
+          {
+            style: "method", id: "Tasks-sweep", schedule: "rate(5 minutes)", file: "src/tasks.service.ts",
+            className: "TasksService", method: "sweep", source: "src/tasks.service.ts:9", workersId: "AppModule",
+          },
+          {
+            style: "method", id: "Tasks-purge", schedule: "rate(1 hour)", file: "src/tasks.service.ts",
+            className: "TasksService", method: "purge", source: "src/tasks.service.ts:14", workersId: "AppModule",
+          },
+        ],
+        queues: [
+          {
+            style: "method", id: "Mailer-send", name: "emails", file: "src/mailer.ts",
+            className: "Mailer", method: "send", source: "src/mailer.ts:5", workersId: "AppModule",
+          },
+        ],
+      }),
+      nestAzureOpts,
+    );
+    // STILL one package — no worker-* dispatcher entry alongside it, unlike AWS.
+    expect(entries.map((e) => e.id)).toEqual(["http"]);
+    expect(entries.find((e) => e.kind === "worker")).toBeUndefined();
+
+    const http = byId(entries, "http");
+    // The module's container is built ONCE and shared by all three triggers.
+    expect(http.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
+    expect(http.contents).toContain(
+      `const context_AppModule = nestContext(() => NestFactory.createApplicationContext(workersModule_AppModule));`,
+    );
+    expect(http.contents.match(/nestContext\(/g)?.length).toBe(1);
+    // Providers come from the COMPILED build (DI metadata), imported once per class.
+    expect(http.contents).toContain(`import { TasksService } from "../../dist/tasks.service";`);
+    expect(http.contents.match(/import \{ TasksService \} from/g)?.length).toBe(1);
+    // Each trigger is its own registration — the trigger IS the function on Azure.
+    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    expect(http.contents).toContain(`registerAzureNestCron("Tasks-purge", context_AppModule, TasksService, "purge");`);
+    // Queues key by NAME, not id.
+    expect(http.contents).toContain(`registerAzureNestQueue("emails", context_AppModule, Mailer, "send");`);
+  });
+
+  test("each workers() root gets its own context, so one root never boots another", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        workers: [
+          { id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" },
+          { id: "BillingModule", handlerEntry: "src/billing.module.ts", appExport: "jobs" },
+        ],
+        crons: [
+          {
+            style: "method", id: "Tasks-sweep", schedule: "rate(5 minutes)", file: "src/tasks.service.ts",
+            className: "TasksService", method: "sweep", source: "src/tasks.service.ts:9", workersId: "AppModule",
+          },
+          {
+            style: "method", id: "Invoices-run", schedule: "rate(1 day)", file: "src/invoices.service.ts",
+            className: "InvoicesService", method: "run", source: "src/invoices.service.ts:7", workersId: "BillingModule",
+          },
+        ],
+      }),
+      nestAzureOpts,
+    );
+    const http = byId(entries, "http");
+    expect(http.contents.match(/nestContext\(/g)?.length).toBe(2);
+    expect(http.contents).toContain(`import { jobs as workersModule_BillingModule } from "../../dist/billing.module";`);
+    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    expect(http.contents).toContain(
+      `registerAzureNestCron("Invoices-run", context_BillingModule, InvoicesService, "run");`,
+    );
+  });
+
+  test("DI and function-style handlers coexist in the one package", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
+        crons: [
+          {
+            style: "method", id: "Tasks-sweep", schedule: "rate(5 minutes)", file: "src/tasks.service.ts",
+            className: "TasksService", method: "sweep", source: "src/tasks.service.ts:9", workersId: "AppModule",
+          },
+          { style: "function", id: "poll", schedule: "rate(5 minutes)", file: "src/jobs.ts", exportName: "poll", source: "src/jobs.ts:1" },
+        ],
+      }),
+      nestAzureOpts,
+    );
+    const http = byId(entries, "http");
+    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    // No DI needed, so it bundles from SOURCE and uses the plain registrar.
+    expect(http.contents).toContain(`import { poll } from "../../src/jobs";`);
+    expect(http.contents).toContain(`registerAzureCron("poll", poll);`);
   });
 });
 

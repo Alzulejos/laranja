@@ -265,9 +265,11 @@ export default workers(AppModule);   // or: export const jobs = workers(AppModul
 ```
 
 Pass `AppModule` for the whole graph, or a leaner module for a smaller cold
-start. There's exactly one per project. Required when a Nest project has
-class-based workers; standalone [`cron()`](#cron-marker)/[`queue()`](#queue-marker)
-functions don't need it (no DI). Returns its argument untouched — a static marker.
+start. You can declare **several roots** — each handler is bound to exactly one, and
+a handler in one root never boots another root's module. Required when a Nest
+project has class-based workers; standalone
+[`cron()`](#cron-marker)/[`queue()`](#queue-marker) functions don't need it (no DI).
+Returns its argument untouched — a static marker.
 
 ---
 

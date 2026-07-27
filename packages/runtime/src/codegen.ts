@@ -56,6 +56,11 @@ function safe(id: string): string {
   return id.replace(/[^A-Za-z0-9_-]/g, "_");
 }
 
+/** Make an id safe to use as a JS identifier (file names allow `-`, identifiers don't). */
+function ident(id: string): string {
+  return id.replace(/[^A-Za-z0-9_$]/g, "_");
+}
+
 /** An `import` line binding a (possibly-default, possibly-aliased) export to a local name. */
 function importBinding(local: string, exportName: string, spec: string): string {
   if (exportName === "default") return `import ${local} from "${spec}";`;
@@ -156,21 +161,54 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   // whole app keeps ONE asset (keyed "http", the package) end to end. http() is
   // OPTIONAL — a crons/queues-only app deploys the same package minus the proxy.
   if (ir.app.provider === "azure") {
-    // Nest HTTP works: the shim registers synchronously and bootstraps lazily on the
-    // first request. Nest class-based crons/queues do NOT yet — they resolve their
-    // provider through a `workers()` DI root, which has no Azure boot path. (Function-
-    // style cron()/queue() in a Nest project need no DI, so they fall through fine.)
-    const grouped = [...ir.crons, ...ir.queues].filter(isGrouped);
-    if (grouped.length > 0) {
-      throw new Error(
-        `Nest @Cron/@Queue on a class isn't supported on Azure yet — they boot through a ` +
-          `dependency-injection root: ${grouped.map((h) => `"${h.id}"`).join(", ")}.\n` +
-          `  Deploy to AWS (provider: "aws") for now, or use function-style cron()/queue().`,
-      );
-    }
     const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
     const runtimeImports = new Set<string>();
+    const contextDecls: string[] = [];
     const registrations: string[] = [];
+
+    // Class-based Nest crons/queues resolve their provider through DI. Azure can't
+    // consolidate them the way an AWS worker Lambda does — the trigger IS the
+    // function, so a workers() root with five crons stays five registrations — but
+    // they all run in ONE Function App process, so they share a single memoized
+    // container PER ROOT. That's exactly what the AWS dispatcher buys by
+    // consolidating, minus the dispatcher: the DI graph is built at most once per
+    // root, by whichever trigger fires first, and a cron in root A never boots B.
+    const grouped = [...ir.crons, ...ir.queues].filter(isGrouped);
+    const contextVars = new Map<string, string>(); // workersId -> local context name
+    if (grouped.length > 0) {
+      const resolve = opts.resolveCompiled;
+      if (!resolve) {
+        throw new Error(
+          `Cannot generate the Azure worker registrations: missing the compiled Nest ` +
+            `build. Build your app first (e.g. \`npm run build\`).`,
+        );
+      }
+      runtimeImports.add("nestContext");
+      for (const w of workers) {
+        if (!grouped.some((h) => h.workersId === w.id)) continue;
+        const moduleLocal = `workersModule_${ident(w.id)}`;
+        const moduleImport = importBinding(
+          moduleLocal,
+          w.appExport,
+          importSpecifier(opts.entryDir, resolve(w.handlerEntry)),
+        );
+        userImports.set(moduleImport, moduleImport);
+        const ctx = `context_${ident(w.id)}`;
+        contextVars.set(w.id, ctx);
+        contextDecls.push(`const ${ctx} = nestContext(() => NestFactory.createApplicationContext(${moduleLocal}));`);
+      }
+    }
+    /** The shared container for a grouped handler's DI root. */
+    const contextFor = (h: { id: string; workersId?: string }): string => {
+      const ctx = h.workersId === undefined ? undefined : contextVars.get(h.workersId);
+      if (!ctx) throw new Error(`Internal: "${h.id}" has no workers() root to resolve against.`);
+      return ctx;
+    };
+    /** Grouped handlers import the COMPILED provider (DI metadata intact); standalone
+     *  ones need no metadata and bundle from source, as they do on AWS. */
+    const handlerSpec = (h: { file: string }, isDi: boolean): string =>
+      importSpecifier(opts.entryDir, isDi ? opts.resolveCompiled!(h.file) : path.join(opts.projectDir, h.file));
+
     if (ir.http) {
       const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
       // Express exports a ready app instance; Nest exports an async bootstrap factory
@@ -184,33 +222,43 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
       registrations.push(`${register}(${local});`);
     }
     for (const cron of ir.crons) {
-      // workersId (Nest method) crons are rejected upstream; these are standalone.
-      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, cron.file));
-      const { importLine, factoryArgs } = handlerWiring(cron, spec);
+      const di = isGrouped(cron);
+      const { importLine, factoryArgs } = handlerWiring(cron, handlerSpec(cron, di));
       userImports.set(importLine, importLine); // dedupe: methods on one class share an import
-      runtimeImports.add("registerAzureCron");
-      registrations.push(`registerAzureCron(${JSON.stringify(cron.id)}, ${factoryArgs});`);
+      const register = di ? "registerAzureNestCron" : "registerAzureCron";
+      const args = di ? `${contextFor(cron)}, ${factoryArgs}` : factoryArgs;
+      runtimeImports.add(register);
+      registrations.push(`${register}(${JSON.stringify(cron.id)}, ${args});`);
     }
     for (const queue of ir.queues) {
-      const spec = importSpecifier(opts.entryDir, path.join(opts.projectDir, queue.file));
-      const { importLine, factoryArgs } = handlerWiring(queue, spec);
+      const di = isGrouped(queue);
+      const { importLine, factoryArgs } = handlerWiring(queue, handlerSpec(queue, di));
       userImports.set(importLine, importLine);
-      runtimeImports.add("registerAzureQueue");
-      registrations.push(`registerAzureQueue(${JSON.stringify(queue.name)}, ${factoryArgs});`);
+      const register = di ? "registerAzureNestQueue" : "registerAzureQueue";
+      const args = di ? `${contextFor(queue)}, ${factoryArgs}` : factoryArgs;
+      runtimeImports.add(register);
+      // Keyed by NAME, not id — the key the trigger binding and the producer share.
+      registrations.push(`${register}(${JSON.stringify(queue.name)}, ${args});`);
     }
     // Scanner guarantees at least one of http/crons/queues, so registrations is
     // non-empty; the guard keeps the emit honest rather than shipping an empty file.
     if (registrations.length > 0) {
+      // NestFactory comes from the USER's @nestjs/core, keeping this package
+      // framework-agnostic — same arrangement as the AWS worker shim.
+      const header = [
+        contextDecls.length > 0 ? `import { NestFactory } from "@nestjs/core";` : "",
+        [...userImports.keys()].join("\n"),
+        `import { ${[...runtimeImports].join(", ")} } from "@alzulejos/laranja-runtime";`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+      const body = [contextDecls.join("\n"), registrations.join("\n")].filter(Boolean).join("\n\n");
       entries.push({
         id: "http",
         kind: "http",
         fileName: "http.ts",
         handlerExport: "",
-        contents: `${[...userImports.keys()].join("\n")}
-import { ${[...runtimeImports].join(", ")} } from "@alzulejos/laranja-runtime";
-
-${registrations.join("\n")}
-`,
+        contents: `${header}\n\n${body}\n`,
       });
     }
   } else if (ir.http) {
@@ -237,7 +285,10 @@ export const handler = ${factory}(${local});
   // Worker Lambdas: one per `workers()` module, hosting all its grouped (method-
   // style) crons + queues behind a single dispatcher. This is where bundle
   // duplication disappears — the module's DI graph is bundled once, not per handler.
+  // Azure needs no dispatcher: its grouped handlers already registered above against
+  // a shared per-root context, inside the one package. Skipping keeps it at ONE asset.
   for (const w of workers) {
+    if (ir.app.provider === "azure") break;
     const crons = ir.crons.filter((c) => c.workersId === w.id && c.style === "method");
     const queues = ir.queues.filter((q) => q.workersId === w.id && q.style === "method");
     if (crons.length === 0 && queues.length === 0) continue;

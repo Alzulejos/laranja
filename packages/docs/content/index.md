@@ -40,10 +40,7 @@ npx laranja deploy
 - **[Decorators & markers](./reference/decorators-and-markers.md)** — `@Cron`, `@Queue`, `cron`, `queue`, `http`, `env`.
 - **[What gets deployed](./reference/what-gets-deployed.md)** — the AWS resources and how they're named.
 
-> **Status:** **AWS** runs the full feature set — **Express** and **NestJS**, with
-> HTTP, crons, and queues. **Azure** runs **Express** apps with **HTTP, crons,
-> queues, and environment variables**, and **NestJS** apps with **HTTP and
-> environment variables** ([guide](./guides/deploying-to-azure.md)); class-based
-> `@Cron` / `@Queue` handlers on NestJS are a fast-follow. The internal model is
-> provider- and framework-neutral, so new clouds and frameworks land without
-> changing your app code.
+> **Status:** **AWS** and **Azure** both run **Express** and **NestJS**, with HTTP,
+> crons, queues, and environment variables ([Azure guide](./guides/deploying-to-azure.md)).
+> FIFO queues are AWS-only. The internal model is provider- and framework-neutral,
+> so new clouds and frameworks land without changing your app code.

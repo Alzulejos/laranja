@@ -27,7 +27,7 @@ app.use(express.json());
 app.get("/", (_req, res) => res.json({ ok: true }));
 app.post("/users", (req, res) => res.status(201).json(req.body));
 
-export default http(app);          // or: export const api = http(app);
+export default http(app); // or: export const api = http(app);
 ```
 
 `http()` returns the app untouched — it's a static marker, not a wrapper, so it
@@ -51,15 +51,22 @@ export async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   // configure however you like — pipes, guards, middleware, raw body, cookies…
   app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
-  await app.listen(process.env.PORT ?? 3000);  // fine to keep for local dev
-  return app;                                  // ← the only change laranja needs
+  return app; // ← the only change laranja needs
 }
 
-// Run locally with `npm run start`; skipped when laranja imports this file.
-if (require.main === module) void bootstrap();
+// Local dev only: laranja imports this file, it never runs it as the entry point.
+if (require.main === module) {
+  void bootstrap().then((app) => app.listen(process.env.PORT ?? 3000));
+}
 
-export default http(bootstrap);   // wrap the factory, not a module
+export default http(bootstrap); // wrap the factory, not a module
 ```
+
+Keep `listen()` **outside** `bootstrap()`, as above. laranja serves your app itself —
+on AWS through the Lambda proxy, on Azure through a loopback server — so a `listen()`
+inside the factory binds a second, unused port on every cold start. On Azure that is
+also a failure risk: if the Functions host has `PORT` set, your app binds it,
+`EADDRINUSE` is thrown during bootstrap, and the app never starts.
 
 laranja runs your `bootstrap()` verbatim, so every pipe, guard, and piece of
 middleware you configure is preserved — nothing is re-derived. You keep your

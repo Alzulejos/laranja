@@ -140,9 +140,12 @@ export function azureFunctionAppName(app: string, stage: string, suffix?: string
   return slug(suffix ? [app, stage, suffix] : [app, stage], 60);
 }
 
-/** Flex Consumption plan name. One app per plan, so it's named after the app. */
-export function azurePlanName(app: string, stage: string): string {
-  return slug([app, stage, "plan"], 40);
+/**
+ * Flex Consumption plan name. laranja gives each Function App its own plan, so the
+ * suffix matches the app's — see `azureWorkloads` for why there can be several.
+ */
+export function azurePlanName(app: string, stage: string, suffix?: string): string {
+  return slug(suffix ? [app, stage, suffix, "plan"] : [app, stage, "plan"], 40);
 }
 
 /** Application Insights component name. */
@@ -168,3 +171,99 @@ export function azureStorageAccountName(app: string, stage: string, suffix?: str
 
 /** Blob container holding the deployment package. */
 export const AZURE_DEPLOYMENT_CONTAINER = "deploymentpackage";
+
+/* -------------------------------------------------------------------------- */
+/* Workloads                                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * One deployable unit on Azure: a Function App, its package, its process.
+ *
+ * A Function App is an all-or-nothing hosting unit — everything inside it ships in
+ * one package and boots in one process — and memory/scale are set per app (they live
+ * in the SITE's `functionAppConfig.scaleAndConcurrency`, not the plan). So the only
+ * way to give a `workers()` root its own `memory`/`timeout` is to give it its own app.
+ * That's what this split expresses.
+ */
+export interface AzureWorkload {
+  /**
+   * Stable id — the asset key, and what the client matches a zip to an app by.
+   * `"http"` for the primary workload (even when it serves no HTTP app), else the
+   * `workers()` root id.
+   */
+  id: string;
+  /**
+   * Function App name suffix. `undefined` for the primary workload, so it keeps the
+   * historical `<name>-<stage>` name — renaming a Function App destroys and recreates
+   * it, so this is what makes the split a non-breaking upgrade.
+   */
+  suffix?: string;
+  /** The `workers()` root whose DI container this app hosts, if any. */
+  workersId?: string;
+  /** Does this app serve the `http()` app? */
+  http: boolean;
+  /** Cron ids hosted here — the keys `azureCronScheduleSettingKey` is derived from. */
+  cronIds: string[];
+  /** Queue NAMES hosted here — the keys `queueUrlEnvName` is derived from. */
+  queueNames: string[];
+}
+
+/** The slice of the IR this grouping needs, so core's Azure contracts stay standalone. */
+interface WorkloadInput {
+  http?: unknown;
+  crons: { id: string; workersId?: string }[];
+  queues: { name: string; workersId?: string }[];
+  workers?: { id: string }[];
+}
+
+/**
+ * Group an IR into the Function Apps it deploys as.
+ *
+ * - The **primary** workload (`"http"`) hosts the `http()` app plus every handler that
+ *   needs no dependency injection — function-style `cron()`/`queue()`, and any
+ *   Express class handler. It's omitted entirely when there's nothing for it to host
+ *   (a Nest project whose every handler belongs to a `workers()` root).
+ * - Each `workers()` root becomes its **own** workload, so its `compute` applies.
+ *
+ * This keeps the common case at ONE app: an Express app with two crons has no roots,
+ * so everything lands in the primary workload exactly as it does today. The split only
+ * appears once a project declares `workers()`.
+ */
+export function azureWorkloads(ir: WorkloadInput): AzureWorkload[] {
+  const roots = ir.workers ?? [];
+  const rootIds = new Set(roots.map((w) => w.id));
+  // A handler is DI-bound only if its root actually exists; a dangling workersId
+  // would otherwise vanish from every workload and be silently undeployed.
+  const isBound = (h: { workersId?: string }): boolean =>
+    h.workersId !== undefined && rootIds.has(h.workersId);
+
+  const workloads: AzureWorkload[] = [];
+
+  const primaryCrons = ir.crons.filter((c) => !isBound(c)).map((c) => c.id);
+  const primaryQueues = ir.queues.filter((q) => !isBound(q)).map((q) => q.name);
+  if (ir.http !== undefined || primaryCrons.length > 0 || primaryQueues.length > 0) {
+    workloads.push({
+      id: "http",
+      http: ir.http !== undefined,
+      cronIds: primaryCrons,
+      queueNames: primaryQueues,
+    });
+  }
+
+  for (const root of roots) {
+    const cronIds = ir.crons.filter((c) => c.workersId === root.id).map((c) => c.id);
+    const queueNames = ir.queues.filter((q) => q.workersId === root.id).map((q) => q.name);
+    // A root with no handlers bound to it hosts nothing — don't deploy an empty app.
+    if (cronIds.length === 0 && queueNames.length === 0) continue;
+    workloads.push({
+      id: root.id,
+      suffix: root.id,
+      workersId: root.id,
+      http: false,
+      cronIds,
+      queueNames,
+    });
+  }
+
+  return workloads;
+}

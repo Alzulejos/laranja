@@ -225,8 +225,9 @@ export async function deployAzure(
     monitoring: ir.app.monitoring,
     hasHttp: Boolean(ir.http),
     target,
-    crons: ir.crons,
-    queues: ir.queues,
+    ir,
+    // So each row links to the app that actually hosts it, not always the primary.
+    apps: names.apps ?? { http: names.functionApp },
     missingEnv: missing,
     action: alreadyExists ? "UPDATED" : "CREATED",
   });

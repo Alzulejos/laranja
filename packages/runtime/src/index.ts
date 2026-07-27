@@ -2,7 +2,12 @@ export { createHttpHandler } from "./http.js";
 export type { FrameworkApp } from "./http.js";
 export { registerAzureHttp, registerAzureNestHttp } from "./azure-http.js";
 export { registerAzureCron, registerAzureNestCron } from "./azure-scheduled.js";
-export { registerAzureQueue, registerAzureNestQueue } from "./azure-queue.js";
+export {
+  registerAzureQueue,
+  registerAzureNestQueue,
+  registerAzurePoisonQueue,
+  registerAzureNestPoisonQueue,
+} from "./azure-queue.js";
 export { createNestHttpHandler } from "./nest-http.js";
 export type { NestAppLike, NestBootstrap } from "./nest-http.js";
 export { createScheduledHandler } from "./scheduled.js";

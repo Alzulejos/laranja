@@ -189,6 +189,43 @@ describe("azure shim (one package hosts http + crons)", () => {
     // Registered by NAME — the key both the trigger binding and the producer read.
     expect(http.contents).toContain(`registerAzureQueue("emails", onEmail);`);
   });
+
+  test("a dlq adds a poison drain keyed by the SOURCE queue", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        http: { handlerEntry: "src/app.ts", appExport: "app", routes: [] },
+        queues: [
+          { style: "function", id: "emails", name: "emails", file: "src/jobs.ts", exportName: "onEmail", source: "src/jobs.ts:1", dlq: { maxReceiveCount: 3, queue: "emailsDLQ" } },
+          { style: "function", id: "emailsDLQ", name: "emailsDLQ", file: "src/jobs.ts", exportName: "onDead", source: "src/jobs.ts:2" },
+        ],
+      }),
+      opts,
+    );
+    const http = byId(entries, "http");
+    // The DLQ queue keeps its OWN trigger — it stays a queue you can send to…
+    expect(http.contents).toContain(`registerAzureQueue("emailsDLQ", onDead);`);
+    // …and gains a drain of the source's poison queue, into the same consumer.
+    expect(http.contents).toContain(`registerAzurePoisonQueue("emails", onDead);`);
+  });
+
+  test("a dlq shared by two queues emits NO poison drain", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: azureApp,
+        http: { handlerEntry: "src/app.ts", appExport: "app", routes: [] },
+        queues: [
+          { style: "function", id: "a", name: "a", file: "src/jobs.ts", exportName: "onA", source: "src/jobs.ts:1", dlq: { maxReceiveCount: 3, queue: "shared" } },
+          { style: "function", id: "b", name: "b", file: "src/jobs.ts", exportName: "onB", source: "src/jobs.ts:2", dlq: { maxReceiveCount: 3, queue: "shared" } },
+          { style: "function", id: "shared", name: "shared", file: "src/jobs.ts", exportName: "onDead", source: "src/jobs.ts:3" },
+        ],
+      }),
+      opts,
+    );
+    // Azure gives each source its own poison queue; half-wiring would silently deliver
+    // one and drop the other, so neither is wired (the back half warns).
+    expect(byId(entries, "http").contents).not.toContain("registerAzurePoisonQueue");
+  });
 });
 
 describe("azure + nest shim", () => {

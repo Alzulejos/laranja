@@ -1,5 +1,5 @@
 import path from "node:path";
-import { azureWorkloads } from "@alzulejos/laranja-core";
+import { azurePoisonBindings, azureWorkloads } from "@alzulejos/laranja-core";
 import type { CronIR, HandlerRef, InfraIR, QueueIR, WorkersIR } from "@alzulejos/laranja-core";
 
 /**
@@ -165,6 +165,10 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
     const cronById = new Map(ir.crons.map((c) => [c.id, c]));
     const queueByName = new Map(ir.queues.map((q) => [q.name, q]));
     const workerById = new Map(workers.map((w) => [w.id, w]));
+    // `dlq` declarations become extra triggers on Azure's automatic `<source>-poison`
+    // queues. Conflicts (one DLQ named by several sources) are deliberately NOT wired —
+    // the back half warns about them.
+    const poison = azurePoisonBindings(ir.queues);
 
     /** Grouped handlers import the COMPILED provider (DI metadata intact); standalone
      *  ones need no metadata and bundle from source, as they do on AWS. */
@@ -248,6 +252,21 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
         runtimeImports.add(register);
         // Keyed by NAME, not id — the key the trigger binding and the producer share.
         registrations.push(`${register}(${JSON.stringify(queue.name)}, ${args});`);
+      }
+      // Poison drains, registered in the app hosting the DLQ's CONSUMER — that's the
+      // handler they dispatch into. Keyed by the SOURCE queue, since the physical queue
+      // is `<source>-poison` and the function is named for what it drains.
+      for (const binding of poison.bindings) {
+        if (!w.queueNames.includes(binding.dlq)) continue;
+        const queue = queueByName.get(binding.dlq);
+        if (!queue) continue;
+        const di = isGrouped(queue);
+        const { importLine, factoryArgs } = handlerWiring(queue, handlerSpec(queue, di));
+        userImports.set(importLine, importLine);
+        const register = di ? "registerAzureNestPoisonQueue" : "registerAzurePoisonQueue";
+        const args = di ? `${contextFor(queue)}, ${factoryArgs}` : factoryArgs;
+        runtimeImports.add(register);
+        registrations.push(`${register}(${JSON.stringify(binding.source)}, ${args});`);
       }
       // azureWorkloads only yields workloads that host something, so this holds; the
       // guard keeps the emit honest rather than shipping a package with no functions.

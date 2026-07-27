@@ -7,9 +7,11 @@ import {
   ApiRequestError,
   apiErrorMessage,
   AZURE_DEFAULT_TIMEOUT_SECONDS,
+  azureMaxDequeueCount,
   azureWorkloads,
   type AzureHandlerAsset,
   type InfraIR,
+  type QueueIR,
 } from "@alzulejos/laranja-core";
 import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
@@ -18,6 +20,7 @@ import { writeResourceTypes } from "./resource-types.js";
 import { resolveNestCompiledEntry } from "./nest-build.js";
 import { archFromTemplate, assertNativeBinariesMatch } from "./native-guard.js";
 import { step, note } from "./diagnostics.js";
+import * as ui from "./ui.js";
 
 export interface Assembly {
   ir: InfraIR;
@@ -58,6 +61,33 @@ function azureTimeouts(ir: InfraIR): Record<string, number> {
     timeouts[w.id] = compute?.timeout ?? AZURE_DEFAULT_TIMEOUT_SECONDS;
   }
   return timeouts;
+}
+
+/**
+ * Each Azure package's `maxDequeueCount` (the `dlq.maxReceiveCount` retry ceiling),
+ * keyed by entry id.
+ *
+ * Host-WIDE on Azure rather than per-queue, and host.json lives inside the package — so
+ * like the timeout it has to be resolved before bundling, and only per APP. Splitting
+ * workloads is what makes it meaningful: a root's queues now carry their own value, and
+ * it only conflicts when two queues in the SAME app disagree.
+ */
+function azureMaxDequeueCounts(ir: InfraIR): Record<string, number> {
+  if (ir.app.provider !== "azure") return {};
+  const queueByName = new Map(ir.queues.map((q) => [q.name, q]));
+  const counts: Record<string, number> = {};
+  for (const w of azureWorkloads(ir)) {
+    const queues = w.queueNames.map((n) => queueByName.get(n)).filter((q): q is QueueIR => q !== undefined);
+    const { value, conflicting } = azureMaxDequeueCount(queues);
+    if (value !== undefined) counts[w.id] = value;
+    for (const name of conflicting) {
+      ui.warn(
+        `queue "${name}": maxReceiveCount differs from another queue in the same Function App — ` +
+          `Azure applies one retry ceiling per app, so ${value} is used for all of them.`,
+      );
+    }
+  }
+  return counts;
 }
 
 /**
@@ -105,6 +135,8 @@ async function prepareUpload(projectDir: string, env: BuildEnv) {
     // workload: Azure deploys a package per Function App, so a `workers()` root's
     // timeout only reaches it via its own package.
     azureTimeoutsById: azureTimeouts(ir),
+    // Host-wide per app, and inside the package — so resolved here alongside the timeout.
+    azureMaxDequeueById: azureMaxDequeueCounts(ir),
     // Ship the Azure producer SDK (it can't be bundled) only when queues exist.
     hasQueues: ir.queues.length > 0,
   });

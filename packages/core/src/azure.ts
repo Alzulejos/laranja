@@ -61,11 +61,21 @@ export function armParamName(key: string): string {
  * The function timeout is a host.json setting, NOT an ARM property, which is why
  * this exists at all.
  */
-export function buildAzureHostJson(timeoutSeconds: number): Record<string, unknown> {
+export function buildAzureHostJson(
+  timeoutSeconds: number,
+  /**
+   * `maxReceiveCount` for this app's queues. Host-WIDE on Azure (unlike SQS's
+   * per-queue setting), which is why it belongs here rather than in a binding — and
+   * why it's resolved per app: see `azureMaxDequeueCount`. Omitted leaves the host
+   * default (5).
+   */
+  maxDequeueCount?: number,
+): Record<string, unknown> {
   return {
     version: "2.0",
     functionTimeout: toHhMmSs(timeoutSeconds),
     extensions: {
+      ...(maxDequeueCount === undefined ? {} : { queues: { maxDequeueCount } }),
       http: {
         // Azure prefixes HTTP routes with "/api" by default. laranja serves a
         // whole app at root, and the shim forwards the incoming path straight to
@@ -171,6 +181,101 @@ export function azureStorageAccountName(app: string, stage: string, suffix?: str
 
 /** Blob container holding the deployment package. */
 export const AZURE_DEPLOYMENT_CONTAINER = "deploymentpackage";
+
+/* -------------------------------------------------------------------------- */
+/* Dead-lettering (poison queues)                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * App-settings key holding a source queue's POISON queue physical name.
+ *
+ * JOINT CONTRACT: laranja-cdk writes the setting (`<sourcePhysical>-poison`), and the
+ * generated shim binds a trigger with `queueName: '%<this key>%'`. A separate key from
+ * `queueUrlEnvName` because the poison queue is a different physical queue from the
+ * source, and a binding can't concatenate — it expands ONE setting.
+ */
+export function azurePoisonQueueEnvName(sourceQueueName: string): string {
+  return `LARANJA_QUEUE_${sourceQueueName.replace(/[^A-Za-z0-9_]/g, "_")}_POISON`;
+}
+
+/** A source queue's failures routed into another declared queue's consumer. */
+export interface AzurePoisonBinding {
+  /** Source queue NAME. Azure moves its repeatedly-failing messages to `<name>-poison`. */
+  source: string;
+  /** The declared DLQ queue NAME whose consumer should receive them. */
+  dlq: string;
+}
+
+export interface AzurePoisonPlan {
+  /** Bindings to wire: one extra trigger each, dispatching into the DLQ's consumer. */
+  bindings: AzurePoisonBinding[];
+  /** DLQ queues named by 2+ sources — left UNWIRED, and warned about. */
+  conflicts: { dlq: string; sources: string[] }[];
+}
+
+/**
+ * Resolve `dlq` declarations into Azure poison-queue bindings.
+ *
+ * Azure's dead-letter destination is not configurable: the host always moves a
+ * repeatedly-failing message to `<queueName>-poison`. But that's an ordinary Storage
+ * Queue, so laranja binds an extra trigger on it that dispatches into the consumer the
+ * user declared as the DLQ. Without this the declared DLQ consumer receives NOTHING on
+ * Azure while failures pile up unconsumed — the same code silently behaving differently
+ * from AWS.
+ *
+ * A DLQ serving several sources is NOT wired: Azure gives each source its own poison
+ * queue, and one consumer covering N of them would need N bindings whose relationship to
+ * the config is no longer obvious. Those are reported as conflicts so the caller warns
+ * rather than half-wiring.
+ *
+ * `dlq.queue` is a queue NAME (what the scanner validates and the AWS back half looks
+ * up), despite the IR field comment calling it an id.
+ */
+export function azurePoisonBindings(
+  queues: { name: string; dlq?: { queue: string } }[],
+): AzurePoisonPlan {
+  const declared = new Set(queues.map((q) => q.name));
+  const sourcesByDlq = new Map<string, string[]>();
+  for (const q of queues) {
+    const target = q.dlq?.queue;
+    // The scanner already rejects an undeclared or self-referential target; skipping
+    // here keeps a hand-rolled IR from producing a binding to a queue that won't exist.
+    if (!target || target === q.name || !declared.has(target)) continue;
+    const list = sourcesByDlq.get(target);
+    if (list) list.push(q.name);
+    else sourcesByDlq.set(target, [q.name]);
+  }
+
+  const bindings: AzurePoisonBinding[] = [];
+  const conflicts: { dlq: string; sources: string[] }[] = [];
+  for (const [dlq, sources] of sourcesByDlq) {
+    if (sources.length === 1) bindings.push({ source: sources[0], dlq });
+    else conflicts.push({ dlq, sources });
+  }
+  return { bindings, conflicts };
+}
+
+/**
+ * The host-wide retry ceiling for ONE app's queues (`extensions.queues.maxDequeueCount`
+ * in its host.json), plus any queues that asked for a different number.
+ *
+ * `maxReceiveCount` is per-queue on SQS but host-wide on Azure. Since each workload now
+ * gets its own app and its own host.json, a root's queues can carry their own value —
+ * so this only conflicts when two queues in the SAME app disagree.
+ */
+export function azureMaxDequeueCount(
+  queues: { name: string; dlq?: { maxReceiveCount: number } }[],
+): { value?: number; conflicting: string[] } {
+  let value: number | undefined;
+  const conflicting: string[] = [];
+  for (const q of queues) {
+    const requested = q.dlq?.maxReceiveCount;
+    if (requested === undefined) continue;
+    if (value === undefined) value = requested;
+    else if (requested !== value) conflicting.push(q.name);
+  }
+  return { value, conflicting };
+}
 
 /* -------------------------------------------------------------------------- */
 /* Workloads                                                                  */

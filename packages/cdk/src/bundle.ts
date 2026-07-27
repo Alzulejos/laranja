@@ -244,8 +244,15 @@ export interface BundleOptions {
    * a project it can detect — see `writeAzurePackageFiles`. Defaults to "aws".
    */
   provider?: CloudProvider;
-  /** Resolved HTTP timeout in seconds — Azure only, lands in host.json. */
-  httpTimeoutSeconds?: number;
+  /**
+   * Resolved function timeout in seconds, keyed by ENTRY id — Azure only.
+   *
+   * Per-entry rather than one value because the timeout is a `host.json` setting that
+   * lives INSIDE the package, and Azure deploys one package per workload. So a
+   * `workers()` root's `timeout` can only reach it through its own package's
+   * host.json. Missing ids fall back to `AZURE_DEFAULT_TIMEOUT_SECONDS`.
+   */
+  azureTimeoutsById?: Record<string, number>;
   /**
    * The app declares queues, so the runtime producer (`getQueue().send()`) may run.
    * Azure only: its Storage Queue SDK (`@azure/storage-queue`, via `@azure/identity`)
@@ -351,7 +358,7 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     if (natives.size > 0) copyNativeClosure(natives, assetDir);
     // Azure packages are a project the host inspects, not a bare file.
     if (isAzure) {
-      writeAzurePackageFiles(assetDir, opts.httpTimeoutSeconds ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
+      writeAzurePackageFiles(assetDir, opts.azureTimeoutsById?.[e.id] ?? AZURE_DEFAULT_TIMEOUT_SECONDS);
       // @azure/functions is external (see above), so it must physically exist in
       // the package's node_modules for the host to load the SAME instance the
       // shim registered against. Copy it plus its production closure.

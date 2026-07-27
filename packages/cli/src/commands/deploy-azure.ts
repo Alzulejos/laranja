@@ -66,7 +66,12 @@ export async function deployAzure(
   const { ir, template, assets, names, warnings, assetDirsById, deploymentId, projectId } = built;
   note({ deploymentId, functionApp: names.functionApp });
   const cronNote = ir.crons.length ? `, ${ir.crons.length} cron${ir.crons.length === 1 ? "" : "s"}` : "";
-  ui.step("📦", "server build", `${ir.http?.routes.length ?? 0} routes${cronNote} → 1 function app`);
+  const appCount = Object.keys(names.apps ?? { [names.functionApp]: 1 }).length;
+  ui.step(
+    "📦",
+    "server build",
+    `${ir.http?.routes.length ?? 0} routes${cronNote} → ${appCount} function app${appCount === 1 ? "" : "s"}`,
+  );
 
   // Crons on Azure are timer functions on the app, not ARM resources — so list
   // them from the IR or they'd be invisible in the (infrastructure-only) output.
@@ -108,16 +113,21 @@ export async function deployAzure(
     );
   }
 
-  const asset = assets.find((a) => a.id === "http");
-  if (!asset) throw new Error("Internal: server returned no http asset for an Azure deploy.");
-  const assetDir = assetDirsById[asset.id];
-  if (!assetDir) throw new Error(`Internal: no bundled output for handler "${asset.id}".`);
+  // One package per workload: the app, plus one per workers() root. `names.apps` maps
+  // each asset id to the Function App it publishes to.
+  if (assets.length === 0) throw new Error("Internal: server returned no assets for an Azure deploy.");
+  const packages = assets.map((asset) => {
+    const assetDir = assetDirsById[asset.id];
+    if (!assetDir) throw new Error(`Internal: no bundled output for handler "${asset.id}".`);
+    const functionApp = names.apps?.[asset.id] ?? names.functionApp;
+    if (!functionApp) throw new Error(`Internal: server named no function app for handler "${asset.id}".`);
+    return { asset, assetDir, functionApp };
+  });
 
-  step("zip package");
+  step("zip packages");
   const azureDir = path.join(projectDir, ".laranja", "azure");
-  const zipPath = path.join(azureDir, asset.blobName);
   try {
-    await zipDir(assetDir, zipPath);
+    for (const p of packages) await zipDir(p.assetDir, path.join(azureDir, p.asset.blobName));
 
     // Write the template to disk so a failed deploy can be inspected / re-validated
     // with `az deployment group validate --template-file` (the az CLI surfaces the
@@ -160,27 +170,45 @@ export async function deployAzure(
     throw err;
   }
 
-  step("publish package");
-  const up = ui.spinner("publishing app");
-  try {
-    // One deploy is the ONLY method Flex Consumption supports — it makes the
-    // package the app's ACTIVE deployment (a dropped blob is ignored). On a fresh
-    // (or destroy+recreated) app, the identity's storage role may still be
-    // propagating — the publish retries through that rather than failing the deploy.
-    await oneDeployPublish({
-      functionApp: names.functionApp,
-      zipPath,
-      onRetry: ({ attempt, delaySeconds }) =>
-        up.update(`waiting for storage permissions to propagate — retry ${attempt} in ${delaySeconds}s`),
-    });
-    up.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
-  } catch (err) {
-    up.fail("publish failed");
+  step("publish packages");
+  const up = ui.spinner(packages.length === 1 ? "publishing app" : `publishing ${packages.length} apps`);
+  // In PARALLEL: the ARM deployment above is one atomic submission, but each app's
+  // package is published separately afterwards, and doing them in sequence would make
+  // deploy time scale with the number of workers() roots.
+  const published = await Promise.allSettled(
+    packages.map((p) =>
+      // One deploy is the ONLY method Flex Consumption supports — it makes the
+      // package the app's ACTIVE deployment (a dropped blob is ignored). On a fresh
+      // (or destroy+recreated) app, the identity's storage role may still be
+      // propagating — the publish retries through that rather than failing the deploy.
+      oneDeployPublish({
+        functionApp: p.functionApp,
+        zipPath: path.join(azureDir, p.asset.blobName),
+        onRetry: ({ attempt, delaySeconds }) =>
+          up.update(`waiting for storage permissions to propagate — retry ${attempt} in ${delaySeconds}s`),
+      }),
+    ),
+  );
+
+  const failed = published
+    .map((r, i) => ({ r, app: packages[i].functionApp }))
+    .filter((x): x is { r: PromiseRejectedResult; app: string } => x.r.status === "rejected");
+  if (failed.length > 0) {
+    up.fail(`publish failed for ${failed.length} of ${packages.length} app(s)`);
     await reportSafely("report failure", () =>
       patchDeployment(deploymentId, { status: "FAILED" }, apiKey, projectId),
     );
-    throw err;
+    // Say exactly which apps did and didn't update. A partial publish leaves the
+    // project running mixed code versions, and rolling the successes back would be
+    // worse than reporting it plainly.
+    if (failed.length < packages.length) {
+      const ok = packages.map((p) => p.functionApp).filter((a) => !failed.some((f) => f.app === a));
+      ui.warn(`updated: ${ok.join(", ")}`);
+      ui.warn(`NOT updated (still running previous code): ${failed.map((f) => f.app).join(", ")}`);
+    }
+    throw failed[0].r.reason;
   }
+  up.succeed(`deployed in ${Math.round((Date.now() - started) / 1000)}s`);
 
   // Only a project with an http() app has a public URL worth printing; a
   // crons/queues-only app has a Function App hostname but nothing serving on it.

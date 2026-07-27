@@ -75,7 +75,9 @@ describe("azure package layout", () => {
         buildDir: path.join(dir, "build"),
         projectDir,
         provider: "azure",
-        httpTimeoutSeconds: 45,
+        // Per-entry now: the timeout is a host.json setting inside each workload's
+        // own package, so it's keyed by entry id.
+        azureTimeoutsById: { http: 45 },
       });
 
       const assetDir = handlers[0].assetDir;

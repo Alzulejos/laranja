@@ -457,6 +457,31 @@ export async function listAzureFunctions(target: AzureTarget, functionApp: strin
 }
 
 /**
+ * Names of every resource of one type in the resource group.
+ *
+ * `destroy` uses this to tear down what EXISTS rather than what the current code
+ * predicts. That matters since Azure deploys one Function App per workload: deriving
+ * names from config alone would orphan a `workers()` root's app the moment the root is
+ * renamed or removed from the source — and an orphaned Function App keeps billing.
+ * Returns [] rather than throwing when the group has none.
+ */
+export async function listAzureResourceNames(
+  target: AzureTarget,
+  provider: string,
+  type: string,
+  apiVersion: string,
+): Promise<string[]> {
+  const token = await managementToken();
+  const url =
+    `https://management.azure.com/subscriptions/${target.subscriptionId}` +
+    `/resourceGroups/${target.resourceGroup}/providers/${provider}/${type}?api-version=${apiVersion}`;
+  const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+  if (!res.ok) return [];
+  const body = (await res.json()) as { value?: { name?: string }[] };
+  return (body.value ?? []).map((r) => r.name ?? "").filter(Boolean);
+}
+
+/**
  * The Log Analytics workspace's query id (`customerId` — a GUID), needed to
  * query it. Undefined if the workspace doesn't exist (nothing deployed yet).
  */

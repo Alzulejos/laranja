@@ -212,7 +212,18 @@ export interface ArmSynthResponse extends SynthResponseBase {
   /** Per-handler blob locations the client must upload to before deploying. */
   assets: AzureHandlerAsset[];
   /** Resolved resource names the client needs for upload + reporting. */
-  names: { functionApp: string; storageAccount: string; container: string };
+  names: {
+    /** The PRIMARY app — what single-app reporting (`logs`, the summary) defaults to. */
+    functionApp: string;
+    storageAccount: string;
+    container: string;
+    /**
+     * Every Function App deployed, keyed by workload id — the same key as the matching
+     * entry in `assets`, so the client knows which package publishes to which app.
+     * Optional for compatibility with a server that predates the per-workload split.
+     */
+    apps?: Record<string, string>;
+  };
   /** Non-fatal mapping warnings (e.g. memory snapped to an instance size). */
   warnings?: { code: string; message: string }[];
 }

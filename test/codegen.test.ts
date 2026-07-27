@@ -253,6 +253,7 @@ describe("azure + nest shim", () => {
     const entries = generateEntries(
       baseIR({
         app: nestAzureApp,
+        http: { handlerEntry: "src/main.ts", appExport: "default", routes: [] },
         workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
         crons: [
           {
@@ -273,25 +274,35 @@ describe("azure + nest shim", () => {
       }),
       nestAzureOpts,
     );
-    // STILL one package — no worker-* dispatcher entry alongside it, unlike AWS.
-    expect(entries.map((e) => e.id)).toEqual(["http"]);
-    expect(entries.find((e) => e.kind === "worker")).toBeUndefined();
+    // The root gets its OWN package, so its Function App can carry its own compute.
+    expect(entries.map((e) => e.id)).toEqual(["http", "AppModule"]);
+    const worker = byId(entries, "AppModule");
+    expect(worker.kind).toBe("worker");
+    expect(worker.fileName).toBe("worker-AppModule.ts");
+    // Registers by side effect — no exported symbol, like every Azure package.
+    expect(worker.handlerExport).toBe("");
 
-    const http = byId(entries, "http");
-    // The module's container is built ONCE and shared by all three triggers.
-    expect(http.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
-    expect(http.contents).toContain(
+    // The module's container is built ONCE and shared by all three of its triggers.
+    expect(worker.contents).toContain(`import { NestFactory } from "@nestjs/core";`);
+    expect(worker.contents).toContain(
       `const context_AppModule = nestContext(() => NestFactory.createApplicationContext(workersModule_AppModule));`,
     );
-    expect(http.contents.match(/nestContext\(/g)?.length).toBe(1);
+    expect(worker.contents.match(/nestContext\(/g)?.length).toBe(1);
     // Providers come from the COMPILED build (DI metadata), imported once per class.
-    expect(http.contents).toContain(`import { TasksService } from "../../dist/tasks.service";`);
-    expect(http.contents.match(/import \{ TasksService \} from/g)?.length).toBe(1);
+    expect(worker.contents).toContain(`import { TasksService } from "../../dist/tasks.service";`);
+    expect(worker.contents.match(/import \{ TasksService \} from/g)?.length).toBe(1);
     // Each trigger is its own registration — the trigger IS the function on Azure.
-    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
-    expect(http.contents).toContain(`registerAzureNestCron("Tasks-purge", context_AppModule, TasksService, "purge");`);
+    expect(worker.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    expect(worker.contents).toContain(`registerAzureNestCron("Tasks-purge", context_AppModule, TasksService, "purge");`);
     // Queues key by NAME, not id.
-    expect(http.contents).toContain(`registerAzureNestQueue("emails", context_AppModule, Mailer, "send");`);
+    expect(worker.contents).toContain(`registerAzureNestQueue("emails", context_AppModule, Mailer, "send");`);
+
+    // The http package carries the app and NONE of the worker's triggers — that's
+    // what keeps each package (and so each cold start) to its own dependencies.
+    const http = byId(entries, "http");
+    expect(http.contents).toContain(`registerAzureNestHttp(bootstrap);`);
+    expect(http.contents).not.toContain("nestContext");
+    expect(http.contents).not.toContain("TasksService");
   });
 
   test("each workers() root gets its own context, so one root never boots another", () => {
@@ -315,19 +326,31 @@ describe("azure + nest shim", () => {
       }),
       nestAzureOpts,
     );
-    const http = byId(entries, "http");
-    expect(http.contents.match(/nestContext\(/g)?.length).toBe(2);
-    expect(http.contents).toContain(`import { jobs as workersModule_BillingModule } from "../../dist/billing.module";`);
-    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
-    expect(http.contents).toContain(
+    // One package per root, so a trigger in one CANNOT boot the other's module —
+    // the other module isn't even in its package. (No http() here, so no app package.)
+    expect(entries.map((e) => e.id)).toEqual(["AppModule", "BillingModule"]);
+
+    const appMod = byId(entries, "AppModule");
+    expect(appMod.contents.match(/nestContext\(/g)?.length).toBe(1);
+    expect(appMod.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    expect(appMod.contents).not.toContain("BillingModule");
+    expect(appMod.contents).not.toContain("InvoicesService");
+
+    const billing = byId(entries, "BillingModule");
+    expect(billing.fileName).toBe("worker-BillingModule.ts");
+    // Non-default export of the workers() marker is aliased to the local name.
+    expect(billing.contents).toContain(`import { jobs as workersModule_BillingModule } from "../../dist/billing.module";`);
+    expect(billing.contents).toContain(
       `registerAzureNestCron("Invoices-run", context_BillingModule, InvoicesService, "run");`,
     );
+    expect(billing.contents).not.toContain("TasksService");
   });
 
-  test("DI and function-style handlers coexist in the one package", () => {
+  test("function-style handlers stay in the app package, DI ones move out", () => {
     const entries = generateEntries(
       baseIR({
         app: nestAzureApp,
+        http: { handlerEntry: "src/main.ts", appExport: "default", routes: [] },
         workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
         crons: [
           {
@@ -339,11 +362,33 @@ describe("azure + nest shim", () => {
       }),
       nestAzureOpts,
     );
+    // `poll` needs no DI, so it rides with the app rather than earning its own app.
     const http = byId(entries, "http");
-    expect(http.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
-    // No DI needed, so it bundles from SOURCE and uses the plain registrar.
-    expect(http.contents).toContain(`import { poll } from "../../src/jobs";`);
+    expect(http.contents).toContain(`import { poll } from "../../src/jobs";`); // from SOURCE
     expect(http.contents).toContain(`registerAzureCron("poll", poll);`);
+    expect(http.contents).not.toContain("Tasks-sweep");
+
+    const worker = byId(entries, "AppModule");
+    expect(worker.contents).toContain(`registerAzureNestCron("Tasks-sweep", context_AppModule, TasksService, "sweep");`);
+    expect(worker.contents).not.toContain("registerAzureCron(");
+  });
+
+  test("a Nest workers-only project emits no app package at all", () => {
+    const entries = generateEntries(
+      baseIR({
+        app: nestAzureApp,
+        workers: [{ id: "AppModule", handlerEntry: "src/app.module.ts", appExport: "default" }],
+        crons: [
+          {
+            style: "method", id: "Tasks-sweep", schedule: "rate(5 minutes)", file: "src/tasks.service.ts",
+            className: "TasksService", method: "sweep", source: "src/tasks.service.ts:9", workersId: "AppModule",
+          },
+        ],
+      }),
+      nestAzureOpts,
+    );
+    // No http() and nothing DI-free, so there's nothing for a primary package to hold.
+    expect(entries.map((e) => e.id)).toEqual(["AppModule"]);
   });
 });
 

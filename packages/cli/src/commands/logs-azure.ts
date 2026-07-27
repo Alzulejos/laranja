@@ -18,6 +18,7 @@ import {
 } from "@alzulejos/laranja-core";
 import {
   listAzureFunctions,
+  listAzureResourceNames,
   logAnalyticsWorkspaceId,
   queryAppLogs,
   type AzureTarget,
@@ -101,7 +102,16 @@ async function chooseFunction(
 ): Promise<Target | "cancelled"> {
   if (opts.all) return {};
 
-  const fns = await listAzureFunctions(target, functionApp);
+  // A project deploys one Function App per workload, and every app reports into the
+  // one shared workspace — so `--all` needs no change, but the picker has to enumerate
+  // across ALL of this project's apps or a worker's functions would be unpickable.
+  // Discovered from the group so a root that's been renamed still shows up.
+  const owns = (name: string): boolean => name === functionApp || name.startsWith(`${functionApp}-`);
+  const apps = (await listAzureResourceNames(target, "Microsoft.Web", "sites", "2023-12-01")).filter(owns);
+  if (apps.length === 0) apps.push(functionApp);
+  // A function name is unique per app; dedupe in case two apps expose the same one
+  // (the log query filters by function name, not by app).
+  const fns = [...new Set((await Promise.all(apps.map((a) => listAzureFunctions(target, a)))).flat())];
 
   if (opts.name) {
     const q = opts.name.toLowerCase();

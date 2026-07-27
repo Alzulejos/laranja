@@ -1,6 +1,6 @@
 ---
 title: Deploying to Azure
-description: Deploy an Express app and its environment variables to your own Azure subscription.
+description: Deploy an Express or NestJS app and its environment variables to your own Azure subscription.
 order: 7
 ---
 
@@ -13,8 +13,13 @@ code and ships the infrastructure — only the back half targets Azure instead.
 > **What's supported today:** **Express** apps with **HTTP**, **crons** (`@Cron` /
 > `cron()`), **queues** (`@Queue` / `queue()`, backed by Azure Storage Queues —
 > [FIFO is AWS-only](#queues)), and **environment variables**. `http()` is **optional**
-> — a **crons/queues-only** app (no HTTP endpoint) deploys just fine. **NestJS** is
-> AWS-only for now — it's a fast-follow. Deploy NestJS workloads to AWS in the meantime.
+> — a **crons/queues-only** app (no HTTP endpoint) deploys just fine.
+>
+> **NestJS** apps deploy their **HTTP** endpoint and **environment variables**, plus
+> function-style `cron()` / `queue()` handlers. Class-based `@Cron` / `@Queue`
+> handlers — the ones that resolve through a `workers()` dependency-injection root —
+> are still AWS-only and are the next step. Deploy those workloads to AWS in the
+> meantime.
 
 ## Prerequisites
 
@@ -25,7 +30,7 @@ code and ships the infrastructure — only the back half targets Azure instead.
   vars, a managed identity, or `az login`. Locally, `az login` is enough; in CI,
   set a service principal via the `AZURE_*` environment variables.
 - **A region that offers Flex Consumption** and is accepting new customers —
-  `westus2` is a safe default. laranja runs Express on the Azure Functions
+  `westus2` is a safe default. laranja runs your app on the Azure Functions
   **Flex Consumption** plan.
 
 You do **not** need Bicep, ARM templates, or the Azure Functions Core Tools —

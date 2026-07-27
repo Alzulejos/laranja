@@ -1,6 +1,6 @@
 export { createHttpHandler } from "./http.js";
 export type { FrameworkApp } from "./http.js";
-export { registerAzureHttp } from "./azure-http.js";
+export { registerAzureHttp, registerAzureNestHttp } from "./azure-http.js";
 export { registerAzureCron } from "./azure-scheduled.js";
 export { registerAzureQueue } from "./azure-queue.js";
 export { createNestHttpHandler } from "./nest-http.js";

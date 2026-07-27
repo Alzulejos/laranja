@@ -34,40 +34,55 @@ const queue = (name: string): InfraIR["queues"][number] => ({
   name,
 });
 
+/**
+ * `buildAzureResources` args for the common single-app shape. `apps` maps workload id
+ * to Function App name — one entry unless the project declares `workers()` roots.
+ */
+function build(over: {
+  crons?: InfraIR["crons"];
+  queues?: InfraIR["queues"];
+  workers?: InfraIR["workers"];
+  hasHttp?: boolean;
+  monitoring?: boolean;
+  missingEnv?: string[];
+  action?: "CREATED" | "UPDATED";
+  apps?: Record<string, string>;
+}) {
+  const hasHttp = over.hasHttp ?? true;
+  const ir = makeIr({
+    ...(hasHttp ? {} : { http: undefined }),
+    crons: over.crons ?? [],
+    queues: over.queues ?? [],
+    ...(over.workers ? { workers: over.workers } : {}),
+  });
+  return buildAzureResources({
+    name: "shop-dev",
+    appName: "shop",
+    stage: "dev",
+    monitoring: over.monitoring ?? false,
+    hasHttp,
+    target,
+    ir,
+    apps: over.apps ?? { http: "shop-dev" },
+    missingEnv: over.missingEnv ?? [],
+    action: over.action ?? "CREATED",
+  });
+}
+
 describe("azure reported resources", () => {
   test("with no crons, only the function app is reported", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
-      hasHttp: true,
-      target,
-      crons: [],
-      queues: [],
-      missingEnv: [],
-      action: "CREATED",
-    });
+    const resources = build({});
     expect(resources).toHaveLength(1);
     expect(resources[0].type).toBe("http");
   });
 
   test("each cron is reported as its own resource with a readable schedule", () => {
-    const crons = [
-      cron("poll", { kind: "rate", value: 5, unit: "minute" }),
-      cron("nightly", { kind: "cron", expression: "0 0 * * ? *", dialect: "aws" }),
-    ];
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
-      hasHttp: true,
-      target,
-      crons,
-      queues: [],
-      missingEnv: [],
+    const resources = build({
       action: "UPDATED",
+      crons: [
+        cron("poll", { kind: "rate", value: 5, unit: "minute" }),
+        cron("nightly", { kind: "cron", expression: "0 0 * * ? *", dialect: "aws" }),
+      ],
     });
 
     // http + one row per cron — so the dashboard shows the scheduled jobs.
@@ -89,25 +104,15 @@ describe("azure reported resources", () => {
   });
 
   test("each queue is reported as a queue resource mapping to its consumer function", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
-      hasHttp: true,
-      target,
-      crons: [],
-      queues: [queue("emails"), queue("sms")],
-      missingEnv: [],
-      action: "CREATED",
-    });
+    const resources = build({ queues: [queue("emails"), queue("sms")] });
 
     // http + one row per queue, so the dashboard's queue→function graph renders.
     expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["http:http", "queue:emails", "queue:sms"]);
 
     const emails = resources.find((r) => r.name === "emails")!;
-    // Storage Queues have no FIFO, and metadata carries the physical queue name.
-    expect(emails.metadata).toEqual({ queueName: "emails", fifo: false });
+    // Storage Queues have no FIFO, and metadata carries the physical queue name plus
+    // the app hosting the consumer (what lets the dashboard group rows by app).
+    expect(emails.metadata).toEqual({ queueName: "emails", fifo: false, functionApp: "shop-dev" });
     // The consumer function is registered under the queue NAME (see registerAzureQueue).
     expect(emails.externalId).toBe(
       "/subscriptions/sub-123/resourceGroups/rg-app/providers/Microsoft.Web/sites/shop-dev/functions/emails",
@@ -116,35 +121,16 @@ describe("azure reported resources", () => {
   });
 
   test("missing env surfaces as a warning on the http resource only", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
-      hasHttp: true,
-      target,
+    const resources = build({
       crons: [cron("poll", { kind: "rate", value: 1, unit: "hour" })],
-      queues: [],
       missingEnv: ["DATABASE_URL"],
-      action: "CREATED",
     });
     expect(resources[0].metadata.warnings).toEqual(["env with no value: DATABASE_URL"]);
     expect(resources[1].metadata.warnings).toBeUndefined();
   });
 
   test("monitoring on adds a dashboard row deep-linking to App Insights", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: true,
-      hasHttp: true,
-      target,
-      crons: [],
-      queues: [],
-      missingEnv: [],
-      action: "CREATED",
-    });
+    const resources = build({ monitoring: true });
     // http + the observability node — the SAME `dashboard` type the AWS path emits.
     expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["http:http", "dashboard:monitoring"]);
     const mon = resources.find((r) => r.name === "monitoring")!;
@@ -155,17 +141,11 @@ describe("azure reported resources", () => {
   });
 
   test("a crons/queues-only app (no http) reports no http row", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
+    const resources = build({
       hasHttp: false,
-      target,
       crons: [cron("poll", { kind: "rate", value: 5, unit: "minute" })],
       queues: [queue("emails")],
       missingEnv: ["DATABASE_URL"],
-      action: "CREATED",
     });
     // No http row — just the cron + queue functions.
     expect(resources.map((r) => `${r.type}:${r.name}`)).toEqual(["cron:poll", "queue:emails"]);
@@ -174,19 +154,33 @@ describe("azure reported resources", () => {
   });
 
   test("monitoring off emits no dashboard row", () => {
-    const resources = buildAzureResources({
-      name: "shop-dev",
-      appName: "shop",
-      stage: "dev",
-      monitoring: false,
-      hasHttp: true,
-      target,
-      crons: [],
-      queues: [],
-      missingEnv: [],
-      action: "CREATED",
+    expect(build({}).some((r) => r.type === "dashboard")).toBe(false);
+  });
+
+  test("a workers() root's functions link to ITS app, not the primary one", () => {
+    // The bug this guards: hanging every function off the primary app produced portal
+    // links to functions that don't exist there.
+    const resources = build({
+      workers: [{ id: "CronModule", handlerEntry: "src/cron.module.ts", appExport: "default" }],
+      crons: [
+        { ...cron("poll", { kind: "rate", value: 5, unit: "minute" }), style: "method", className: "Jobs", method: "poll", workersId: "CronModule" } as InfraIR["crons"][number],
+      ],
+      queues: [{ ...queue("emails"), style: "method", className: "Mailer", method: "send", workersId: "CronModule" } as InfraIR["queues"][number]],
+      apps: { http: "shop-dev", CronModule: "shop-dev-cronmodule" },
     });
-    expect(resources.some((r) => r.type === "dashboard")).toBe(false);
+
+    const base = "/subscriptions/sub-123/resourceGroups/rg-app/providers/Microsoft.Web/sites";
+    // http stays on the primary app…
+    expect(resources.find((r) => r.type === "http")!.externalId).toBe(`${base}/shop-dev/functions/api`);
+    // …while the DI-bound cron and queue address the worker app that runs them.
+    expect(resources.find((r) => r.name === "poll")!.externalId).toBe(
+      `${base}/shop-dev-cronmodule/functions/poll`,
+    );
+    expect(resources.find((r) => r.name === "emails")!.externalId).toBe(
+      `${base}/shop-dev-cronmodule/functions/emails`,
+    );
+    // Every row names its host, so the dashboard can group by app.
+    expect(resources.find((r) => r.name === "poll")!.metadata.functionApp).toBe("shop-dev-cronmodule");
   });
 });
 

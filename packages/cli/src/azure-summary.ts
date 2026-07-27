@@ -16,6 +16,7 @@
 import {
   AZURE_HTTP_FUNCTION_NAME,
   azureAppInsightsName,
+  azureWorkloads,
   describeSchedule,
   type DeployedResource,
   type InfraIR,
@@ -83,65 +84,89 @@ export function buildAzureResources(args: {
   /** Whether the app has an http() proxy — false for a crons/queues-only Azure app. */
   hasHttp: boolean;
   target: { subscriptionId: string; resourceGroup: string };
-  crons: InfraIR["crons"];
-  queues: InfraIR["queues"];
+  ir: InfraIR;
+  /**
+   * Each workload's Function App, keyed by workload id (the server's `names.apps`).
+   * REQUIRED for correct links: a project deploys one app per workload, so a cron in a
+   * `workers()` root is addressable only under ITS app — hanging every function off the
+   * primary app produces portal links to functions that don't exist there.
+   */
+  apps: Record<string, string>;
   missingEnv: string[];
   action: "CREATED" | "UPDATED";
 }): DeployedResource[] {
-  const { name, appName, stage, monitoring, hasHttp, target, crons, queues, missingEnv, action } = args;
+  const { name, appName, stage, monitoring, hasHttp, target, ir, apps, missingEnv, action } = args;
   const rgId = `/subscriptions/${target.subscriptionId}/resourceGroups/${target.resourceGroup}`;
-  const appId = `${rgId}/providers/Microsoft.Web/sites/${name}`;
-  // Each function is individually addressable under the app; this is the id that
-  // maps a resource row to the specific function it triggers.
-  const functionId = (fnName: string) => `${appId}/functions/${fnName}`;
+  // Each function is individually addressable under the app HOSTING it; this is the id
+  // that maps a resource row to the specific function it triggers.
+  const functionId = (host: string, fnName: string) =>
+    `${rgId}/providers/Microsoft.Web/sites/${host}/functions/${fnName}`;
+
+  const cronById = new Map(ir.crons.map((c) => [c.id, c]));
+  const queueByName = new Map(ir.queues.map((q) => [q.name, q]));
 
   const resources: DeployedResource[] = [];
-  if (hasHttp) {
-    // "http" is the logical name the AWS path uses for the proxy; keeping it means
-    // the dashboard renders an Azure deploy the same way. The underlying function is
-    // `AZURE_HTTP_FUNCTION_NAME` (the shim registers `app.http` with it). Absent for
-    // a crons/queues-only app, which has no http function.
-    resources.push({
-      name: "http",
-      type: "http",
-      action,
-      metadata: {},
-      externalId: functionId(AZURE_HTTP_FUNCTION_NAME),
-      externalUrl: azureFunctionUrl(name),
-    });
+  // Walk workloads so every row carries the app that actually runs it. `functionApp`
+  // in the metadata is what lets the dashboard GROUP rows by app — the resources stay
+  // per-function (a cron with its schedule is the unit the user declared), but they're
+  // now attributable to a host.
+  for (const w of azureWorkloads(ir)) {
+    const host = apps[w.id] ?? name;
+
+    if (w.http && hasHttp) {
+      // "http" is the logical name the AWS path uses for the proxy; keeping it means
+      // the dashboard renders an Azure deploy the same way. The underlying function is
+      // `AZURE_HTTP_FUNCTION_NAME` (the shim registers `app.http` with it). Absent for
+      // a crons/queues-only app, which has no http function.
+      resources.push({
+        name: "http",
+        type: "http",
+        action,
+        metadata: { functionApp: host },
+        externalId: functionId(host, AZURE_HTTP_FUNCTION_NAME),
+        externalUrl: azureFunctionUrl(host),
+      });
+    }
+
+    for (const id of w.cronIds) {
+      const cron = cronById.get(id);
+      if (!cron) continue;
+      // The timer function is registered under the cron id (see registerAzureCron).
+      resources.push({
+        name: cron.id,
+        type: "cron",
+        action,
+        metadata: {
+          schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) },
+          functionApp: host,
+        },
+        externalId: functionId(host, cron.id),
+        externalUrl: null,
+      });
+    }
+
+    for (const qName of w.queueNames) {
+      const queue = queueByName.get(qName);
+      if (!queue) continue;
+      // The consumer function is registered under the queue name (see registerAzureQueue),
+      // so that — not the queue id — is the function sub-resource the portal addresses.
+      // `type: "queue"` matches the AWS report so the dashboard's queue→function graph
+      // renders identically; fifo is always false (Storage Queues have no FIFO) and there's
+      // no per-queue batchSize, so the metadata is intentionally thinner than SQS's.
+      resources.push({
+        name: queue.id,
+        type: "queue",
+        action,
+        metadata: { queueName: queue.name, fifo: false, functionApp: host },
+        externalId: functionId(host, queue.name),
+        externalUrl: null,
+      });
+    }
   }
 
-  for (const cron of crons) {
-    // The timer function is registered under the cron id (see registerAzureCron).
-    resources.push({
-      name: cron.id,
-      type: "cron",
-      action,
-      metadata: { schedule: { ...cron.schedule, description: describeSchedule(cron.schedule) } },
-      externalId: functionId(cron.id),
-      externalUrl: null,
-    });
-  }
-
-  for (const queue of queues) {
-    // The consumer function is registered under the queue name (see registerAzureQueue),
-    // so that — not the queue id — is the function sub-resource the portal addresses.
-    // `type: "queue"` matches the AWS report so the dashboard's queue→function graph
-    // renders identically; fifo is always false (Storage Queues have no FIFO) and there's
-    // no per-queue batchSize, so the metadata is intentionally thinner than SQS's.
-    resources.push({
-      name: queue.id,
-      type: "queue",
-      action,
-      metadata: { queueName: queue.name, fifo: false },
-      externalId: functionId(queue.name),
-      externalUrl: null,
-    });
-  }
-
-  // Missing env is an APP-level warning (all functions share one Function App's
-  // settings). Surface it on the first function resource — the http proxy when
-  // present, otherwise the first cron/queue — so it's visible and never dropped.
+  // Missing env is an APP-level warning (every app gets the same settings). Surface it
+  // on the first function resource — the http proxy when present, otherwise the first
+  // cron/queue — so it's visible and never dropped.
   if (missingEnv.length && resources[0]) {
     resources[0].metadata = {
       ...resources[0].metadata,

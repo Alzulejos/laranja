@@ -31,7 +31,7 @@ npx laranja deploy
 - **[Schedules](./guides/schedules.md)** — the `rate()` / `every()` builders and raw expressions.
 - **[Environment variables](./guides/environment-variables.md)** — `env`, `STAGE`, and resolution.
 - **[Stages & environments](./guides/stages-and-environments.md)** — dev / staging / prod with one codebase.
-- **[Deploying to Azure](./guides/deploying-to-azure.md)** — deploy an Express app + env to your own Azure subscription.
+- **[Deploying to Azure](./guides/deploying-to-azure.md)** — deploy an Express or NestJS app + env to your own Azure subscription.
 
 ## Reference
 
@@ -41,8 +41,9 @@ npx laranja deploy
 - **[What gets deployed](./reference/what-gets-deployed.md)** — the AWS resources and how they're named.
 
 > **Status:** **AWS** runs the full feature set — **Express** and **NestJS**, with
-> HTTP, crons, and queues. **Azure** runs **Express** apps with **HTTP, crons, and
-> environment variables** today ([guide](./guides/deploying-to-azure.md)); Azure
-> queues and NestJS are a fast-follow. The internal model is provider- and
-> framework-neutral, so new clouds and frameworks land without changing your app
-> code.
+> HTTP, crons, and queues. **Azure** runs **Express** apps with **HTTP, crons,
+> queues, and environment variables**, and **NestJS** apps with **HTTP and
+> environment variables** ([guide](./guides/deploying-to-azure.md)); class-based
+> `@Cron` / `@Queue` handlers on NestJS are a fast-follow. The internal model is
+> provider- and framework-neutral, so new clouds and frameworks land without
+> changing your app code.

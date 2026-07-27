@@ -36,17 +36,11 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   // credentials (and, for AWS, a region to diff against the live stack).
   if (!(await preflightOrAbort(config, "plan"))) return;
 
-  // Azure previews via ARM what-if, not a CloudFormation stack diff.
-  if (config.provider === "azure") {
-    return planAzure(projectDir, { stage: opts.stage });
-  }
-
-  const region = requireRegion(config.region);
-  applyAwsEnv({ region, profile: config.profile });
-
   // The webpack builder renames the bootstrap export, which laranja resolves by
   // name — deploys against a webpacked build fail to find it. Flag it here in the
   // cheap path so it's caught before deploy. See docs → Reference → Troubleshooting.
+  // Provider-independent: both back halves resolve the bootstrap by name, so this
+  // must run BEFORE the Azure branch below.
   if (usesWebpackBuilder(projectDir)) {
     ui.warn(
       "nest-cli.json uses the webpack builder. laranja needs the tsc builder — " +
@@ -55,6 +49,14 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
         "See https://laranja.io/docs/reference/troubleshooting#nestjs-webpack-builder",
     );
   }
+
+  // Azure previews via ARM what-if, not a CloudFormation stack diff.
+  if (config.provider === "azure") {
+    return planAzure(projectDir, { stage: opts.stage });
+  }
+
+  const region = requireRegion(config.region);
+  applyAwsEnv({ region, profile: config.profile });
 
   const sp = ui.spinner("diffing against your deployed stack");
   try {

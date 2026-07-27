@@ -156,10 +156,16 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
   // whole app keeps ONE asset (keyed "http", the package) end to end. http() is
   // OPTIONAL — a crons/queues-only app deploys the same package minus the proxy.
   if (ir.app.provider === "azure") {
-    if (isNest) {
+    // Nest HTTP works: the shim registers synchronously and bootstraps lazily on the
+    // first request. Nest class-based crons/queues do NOT yet — they resolve their
+    // provider through a `workers()` DI root, which has no Azure boot path. (Function-
+    // style cron()/queue() in a Nest project need no DI, so they fall through fine.)
+    const grouped = [...ir.crons, ...ir.queues].filter(isGrouped);
+    if (grouped.length > 0) {
       throw new Error(
-        `Azure support is Express-only today — this project uses NestJS.\n` +
-          `  Deploy to AWS (provider: "aws") for now; Azure + NestJS is the next step.`,
+        `Nest @Cron/@Queue on a class isn't supported on Azure yet — they boot through a ` +
+          `dependency-injection root: ${grouped.map((h) => `"${h.id}"`).join(", ")}.\n` +
+          `  Deploy to AWS (provider: "aws") for now, or use function-style cron()/queue().`,
       );
     }
     const userImports = new Map<string, string>(); // importLine -> itself (dedupe)
@@ -167,10 +173,15 @@ export function generateEntries(ir: InfraIR, opts: GenerateEntriesOptions): Gene
     const registrations: string[] = [];
     if (ir.http) {
       const httpTarget = opts.httpEntry ?? path.join(opts.projectDir, ir.http.handlerEntry);
-      const appImport = importBinding("app", ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
+      // Express exports a ready app instance; Nest exports an async bootstrap factory
+      // and imports the COMPILED bootstrap — the same split the AWS branch makes
+      // between createHttpHandler and createNestHttpHandler.
+      const local = isNest ? "bootstrap" : "app";
+      const register = isNest ? "registerAzureNestHttp" : "registerAzureHttp";
+      const appImport = importBinding(local, ir.http.appExport, importSpecifier(opts.entryDir, httpTarget));
       userImports.set(appImport, appImport);
-      runtimeImports.add("registerAzureHttp");
-      registrations.push(`registerAzureHttp(app);`);
+      runtimeImports.add(register);
+      registrations.push(`${register}(${local});`);
     }
     for (const cron of ir.crons) {
       // workersId (Nest method) crons are rejected upstream; these are standalone.

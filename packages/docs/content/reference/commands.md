@@ -11,7 +11,9 @@ laranja <command> [project-dir] [flags]
 ```
 
 `project-dir` defaults to the current directory, so most of the time you just run
-`laranja deploy`. Run `laranja --help` for a summary.
+`laranja deploy`. Run `laranja --help` for a summary. Every command works the
+same on **AWS** and **Azure** — the [`provider`](./config-file.md#provider) in
+your config decides which account they talk to.
 
 > **Most commands need your account.** `plan`, `deploy`, and `eject` build your
 > template on the laranja server, so they need a `LARANJA_API_KEY` and a
@@ -26,7 +28,7 @@ laranja <command> [project-dir] [flags]
 | Flag | Applies to | Description |
 |---|---|---|
 | `--stage`, `-s <name>` | deploy, plan, destroy, logs, eject | Target [stage](../guides/stages-and-environments.md); overrides `config.stage`. |
-| `--verbose`, `-v` | deploy | Stream full CDK/CloudFormation output instead of the compact UI. |
+| `--verbose`, `-v` | deploy | Stream the full provider output (CDK/CloudFormation, or ARM) instead of the compact UI. |
 | `--strict` | deploy | Fail if any [`env()`](../guides/environment-variables.md#values-from-your-environment--env) value is unset (default: warn). |
 
 ---
@@ -43,8 +45,10 @@ laranja init
 against the server before writing anything, then stores it in
 `~/.laranja/auth.json` so later commands don't need it re-exported. It then lets
 you **pick or create a dashboard project** and fills the scaffolded config's
-`name` and `projectId` for you. Edit the file afterwards to set your `region`,
-`env`, and `compute`. See the [config reference](./config-file.md).
+`name` and `projectId` for you, and asks which **cloud** to target — choosing
+Azure also fills in the subscription, resource group, and region. Edit the file
+afterwards to set your `env` and `compute`. See the
+[config reference](./config-file.md).
 
 ---
 
@@ -64,7 +68,7 @@ need `LARANJA_API_KEY` in the environment again, or another `laranja init`.
 ## `plan`
 
 Preview what a deploy would do — laranja synthesizes your template on the server,
-diffs it against the stack **currently deployed** in your AWS account, and prints
+diffs it against what's **currently deployed** in your cloud account, and prints
 your app's resources tagged **created / changed / unchanged**. Nothing is applied.
 
 ```bash
@@ -83,7 +87,7 @@ Plan for "my-api-dev"
 ```
 
 `+` is new, `~` changed, `=` unchanged. The bottom line tallies the underlying
-AWS resources.
+cloud resources (the example above is AWS; Azure lists its own).
 
 `plan` needs `LARANJA_API_KEY` (run [`laranja init`](#init) first) to synthesize,
 and a working **AWS credential chain** to read your live stack. It is
@@ -97,10 +101,10 @@ and a working **AWS credential chain** to read your live stack. It is
 
 ## `deploy`
 
-Deploy into your AWS account using your **local** AWS credentials. The template is
+Deploy into your cloud account using your **local** credentials. The template is
 synthesized on the laranja server first, then applied with your own credentials —
 so deploy needs both `LARANJA_API_KEY` (run [`laranja init`](#init) first) and a
-working AWS credential chain.
+working credential chain for your provider.
 
 ```bash
 laranja deploy
@@ -108,30 +112,33 @@ laranja deploy --stage prod
 laranja deploy --verbose
 ```
 
-- The first deploy to a new account/region prompts to **bootstrap** (a one-time
-  setup in your account).
+- A **preflight** checks your credentials and provider setup first, printing the
+  exact command to fix anything missing.
+- On AWS, the first deploy to a new account/region prompts to **bootstrap** (a
+  one-time setup in your account).
 - On success it prints your outputs — the HTTPS URL, queue URLs, and the cron
   jobs deployed.
 
 | Flag | Description |
 |---|---|
 | `--stage`, `-s` | Target stage. |
-| `--verbose`, `-v` | Stream full CDK output. |
+| `--verbose`, `-v` | Stream full provider output. |
 | `--strict` | Fail the deploy if any [`env()`](../guides/environment-variables.md#values-from-your-environment--env) value is unset. By default these are deployed with a warning. |
 
 ---
 
 ## `destroy`
 
-Tear down the deployed stack and all its resources. Prompts for confirmation.
+Tear down the deployment and all its resources. Prompts for confirmation.
 
 ```bash
 laranja destroy
 laranja destroy --stage prod
 ```
 
-> Targets the stack for the resolved stage — make sure `--stage` matches the
-> environment you intend to remove.
+> Targets the resolved stage — make sure `--stage` matches the environment you
+> intend to remove. On Azure your **resource group** itself is never deleted;
+> only the resources laranja created inside it.
 
 | Flag | Description |
 |---|---|
@@ -141,8 +148,9 @@ laranja destroy --stage prod
 
 ## `logs`
 
-Tail CloudWatch logs for your deployed functions. The live stack is the source of
-truth — no local state needed.
+Tail logs for your deployed functions — **CloudWatch** on AWS, **Application
+Insights** on Azure. The live deployment is the source of truth — no local state
+needed.
 
 ```bash
 laranja logs                 # interactive picker (TTY)
@@ -168,8 +176,8 @@ Both a directory and a function name can be passed as positionals —
 
 ## `eject`
 
-Generate a standalone, owned **CDK project** from your app and stop — for when
-you've outgrown the abstraction and want full control. **Paid feature.**
+Generate a standalone, owned **infrastructure project** from your app and stop —
+for when you've outgrown the abstraction and want full control. **Paid feature.**
 
 ```bash
 laranja eject
@@ -177,10 +185,22 @@ laranja eject --force      # overwrite an existing ./infra
 laranja eject --stage prod
 ```
 
-The CDK project is generated **on the laranja server** (which gates the paid
-entitlement) and written to `./infra` — a complete project you own and run
-yourself (`cd infra && npm install && npm run deploy`). Requires `LARANJA_API_KEY`
-and a `projectId`; if your account can't eject, the server returns a clear error.
+What lands in `./infra` depends on your provider:
+
+| Provider | You get | You run it with |
+|---|---|---|
+| AWS | A complete **CDK project** | `cd infra && npm install && npm run deploy` |
+| Azure | An **ARM template** + parameters, one built `.zip` per Function App, and a `deploy.sh` | `cd infra && ./deploy.sh` (Azure CLI only — no Node, no laranja) |
+
+Either way it's generated **on the laranja server** (which gates the paid
+entitlement). Requires `LARANJA_API_KEY` and a `projectId`; if your account can't
+eject, the server returns a clear error.
+
+On Azure, a project with [`workers()`](./decorators-and-markers.md#workers) roots
+deploys as [several Function Apps](../guides/deploying-to-azure.md#nestjs-workers-on-azure);
+eject writes one package per app and `deploy.sh` publishes them all. A
+[workers-only](../guides/http-apps.md#workers-only-deployments) app ejects fine —
+there's simply no HTTP function in the result.
 
 | Flag | Description |
 |---|---|
@@ -191,3 +211,4 @@ and a `projectId`; if your account can't eject, the server returns a clear error
 
 - [Stages & environments](../guides/stages-and-environments.md)
 - [How it works](../getting-started/how-it-works.md)
+- [Deploying to Azure](../guides/deploying-to-azure.md)

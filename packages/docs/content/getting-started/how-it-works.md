@@ -1,12 +1,12 @@
 ---
 title: How it works
-description: How laranja turns your code into a running app on AWS.
+description: How laranja turns your code into a running app in your own cloud account.
 order: 4
 ---
 
 # How it works
 
-You write your app; laranja deploys it to your own AWS account. Two things are
+You write your app; laranja deploys it to your own cloud account. Two things are
 worth knowing about how it does that.
 
 ## It reads your code — it never runs it
@@ -21,19 +21,22 @@ That's also why a few things must be written so laranja can see them: schedules
 use literal builders like `rate(5, "minutes")`, and `env("…")` takes a string
 literal.
 
-## It deploys into your AWS account
+## It deploys into your own account
 
-laranja turns what it found into AWS resources — a Lambda for your app, an
-EventBridge rule per cron, an SQS queue per consumer — and deploys them with
-**your** credentials into **your** account. See
+laranja turns what it found into real cloud resources — a function serving your
+app, a schedule per cron, a queue per consumer — and deploys them with **your**
+credentials into **your** account. Which resources depends on the
+[`provider`](../reference/config-file.md#provider) you picked; see
 [what gets deployed](../reference/what-gets-deployed.md) for the full mapping.
 
-- The AWS CDK toolkit is embedded, so there's nothing extra to install.
-- The first deploy to a new account/region runs a one-time **bootstrap**.
+- The provider toolchain is embedded (the AWS CDK toolkit, or ARM for Azure), so
+  there's nothing extra to install — no CDK, no CLI, no Bicep.
 - [`plan`](../reference/commands.md#plan) previews what a deploy would change
   (created/changed/unchanged); [`destroy`](../reference/commands.md#destroy)
-  tears the stack down.
+  tears the deployment down.
 - Outputs (your HTTPS URL, queue URLs) are printed when the deploy finishes.
+- On AWS only, the first deploy to a new account/region runs a one-time
+  **bootstrap**.
 
 ## The template is built on the server — your code stays local
 
@@ -42,7 +45,7 @@ synthesize the deployment template on the **laranja server**. laranja scans and
 bundles your code locally, then sends only a **description** of your
 infrastructure (the internal model plus the asset hashes of your bundles) — your
 source code and bundles never leave your machine. The returned template is then
-applied to AWS with your **own** credentials. This is why these commands need a
+applied to your cloud with your **own** credentials. This is why these commands need a
 `LARANJA_API_KEY` and a `projectId` (run [`laranja init`](../reference/commands.md#init)
 once to set both up).
 
@@ -50,3 +53,4 @@ once to set both up).
 
 - [What gets deployed](../reference/what-gets-deployed.md)
 - [Stages & environments](../guides/stages-and-environments.md)
+- [Deploying to Azure](../guides/deploying-to-azure.md)

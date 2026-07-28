@@ -1,6 +1,6 @@
 # 🍊 laranja
 
-**Code-first deploys for Node.js.** Write your Express or NestJS app and decorate your background jobs — laranja reads your code, figures out the infrastructure, and deploys it to **your own AWS account**. No YAML, no console clicking, no CDK to learn.
+**Code-first deploys for Node.js.** Write your Express or NestJS app and decorate your background jobs — laranja reads your code, figures out the infrastructure, and deploys it to **your own AWS or Azure account**. No YAML, no console clicking, no CDK or ARM to learn.
 
 ```bash
 $ laranja deploy
@@ -17,14 +17,15 @@ $ laranja deploy
   ✨ live
 ```
 
-> **Status:** early MVP. **Express and NestJS** are supported today. APIs may change.
+> **Status:** early MVP. **Express and NestJS** on **AWS and Azure** are supported today. APIs may change.
 
 ## Why laranja?
 
 - **Your code is the source of truth.** Routes and decorators _are_ the infra spec — no drift between app and config.
-- **Your account, your data.** Deploys go straight into your AWS account with your own local credentials. laranja hosts none of your infrastructure.
+- **Your account, your data.** Deploys go straight into your own cloud account with your own local credentials. laranja hosts none of your infrastructure.
 - **Your source stays local.** laranja _reads_ your code to discover infra — it never runs it, and only a description of your infra ever crosses the wire.
-- **Nothing to learn.** The AWS CDK toolkit is embedded; there's no CDK or CLI to install. Outgrow the magic? `laranja eject` hands you a fully-owned CDK project.
+- **Not locked to one cloud.** The same app code deploys to **AWS** or **Azure** — one `provider` field, not a rewrite.
+- **Nothing to learn.** The provider toolchain is embedded; there's no CDK, CLI, or Bicep to install. Outgrow the magic? `laranja eject` hands you a fully-owned infrastructure project.
 
 ## Install
 
@@ -33,7 +34,7 @@ npm install @alzulejos/laranja-decorators     # used in your app code
 npm install -D @alzulejos/laranja             # the `laranja` command
 ```
 
-You'll also need **Node.js 20+**, **AWS credentials** on the standard chain (`aws configure`, SSO, or `AWS_*` env vars), and a **laranja API key** from the [dashboard](https://laranja.io) — `laranja init` wires it up.
+You'll also need **Node.js 20+**, credentials for your cloud on its standard chain (**AWS**: `aws configure`, SSO, or `AWS_*` env vars · **Azure**: `az login` or `AZURE_*`), and a **laranja API key** from the [dashboard](https://laranja.io) — `laranja init` wires it up and asks which cloud to target.
 
 ## Express
 
@@ -119,18 +120,38 @@ export class QueueService {
 }
 ```
 
-Deploys to a Lambda behind a Function URL for HTTP, plus an SQS queue with a consumer Lambda. Produce messages with `getQueue("emails").send(...)`.
+Deploys as one function behind a public HTTPS URL, plus a queue with a consumer — a Lambda + Function URL + SQS on AWS, a Function App + Storage Queue on Azure. Produce messages with `getQueue("emails").send(...)`.
+
+## Azure
+
+Same app code, same commands — switch clouds with one config field:
+
+```ts
+// laranja.config.ts
+const config: LaranjaConfig = {
+  name: "my-api",
+  projectId: "proj_…",
+  provider: "azure",
+  region: "westus2",
+  azure: { subscriptionId: "…", resourceGroup: "my-existing-group" },
+};
+```
+
+HTTP, crons, queues, and env vars all work on both. FIFO queues are AWS-only. See the [Azure guide](https://laranja.io/docs/guides/deploying-to-azure).
 
 ## Documentation
 
-The README is a taste. Everything else — full decorator API, every config field, all CLI flags, env vars, stages, custom domains, and how the client/server split keeps your source local — lives at **[laranja.io/docs](https://laranja.io/docs)**:
+The README is a taste. Everything else — full decorator API, every config field, all CLI flags, env vars, stages, the AWS/Azure differences, and how the client/server split keeps your source local — lives in the official docs at **[laranja.io/docs](https://laranja.io/docs)**:
 
-- [Introduction & how it works](packages/docs/content/getting-started/how-it-works.md)
-- [Quickstart](packages/docs/content/getting-started/quickstart.md)
-- [Decorators & markers](packages/docs/content/reference/decorators-and-markers.md)
-- [CLI commands](packages/docs/content/reference/commands.md)
-- [Config file](packages/docs/content/reference/config-file.md)
-- [Guides](packages/docs/content/guides/) — cron, queues, env vars, stages, HTTP apps
+- [Introduction & how it works](https://laranja.io/docs/getting-started/how-it-works)
+- [Quickstart](https://laranja.io/docs/getting-started/quickstart)
+- [Decorators & markers](https://laranja.io/docs/reference/decorators-and-markers)
+- [CLI commands](https://laranja.io/docs/reference/commands)
+- [Config file](https://laranja.io/docs/reference/config-file)
+- [What gets deployed](https://laranja.io/docs/reference/what-gets-deployed)
+- [Deploying to Azure](https://laranja.io/docs/guides/deploying-to-azure)
+
+The docs are authored in this repo under [`packages/docs/content/`](packages/docs/content/) — that's the single source, rendered by the site.
 
 ## Local development (monorepo)
 

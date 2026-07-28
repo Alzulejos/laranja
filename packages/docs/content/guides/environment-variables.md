@@ -6,8 +6,9 @@ order: 5
 
 # Environment variables
 
-Every Lambda laranja deploys receives a set of environment variables, available
-through `process.env` as usual. There are two ways to declare them.
+Every function laranja deploys receives a set of environment variables, available
+through `process.env` as usual — a Lambda's environment on AWS, the Function
+App's application settings on Azure. There are two ways to declare them.
 
 ## Static values in config
 
@@ -45,7 +46,7 @@ const dbUrl = env("DATABASE_URL"); // same as process.env.DATABASE_URL at runtim
 ```
 
 laranja finds every `env("…")` in your code and makes sure that variable is set
-on **every** deployed function — no more filling them in by hand in the AWS
+on **every** deployed function — no more filling them in by hand in the cloud
 console. At deploy time it reads each value from your own environment and sends
 it straight to the function; the value is never written into your repo.
 
@@ -68,7 +69,7 @@ DATABASE_URL=postgres://… laranja deploy --stage prod
 
 ## The `STAGE` variable
 
-laranja always injects `STAGE`, set to the active [stage](./stages-and-environments.md)
+laranja always injects `STAGE` on every provider, set to the active [stage](./stages-and-environments.md)
 (`"dev"` by default, or whatever `--stage` resolved to). You don't declare it:
 
 ```ts
@@ -96,13 +97,16 @@ LOG_LEVEL=warn  laranja deploy --stage prod
 
 ## Secrets
 
-`env()` keeps values out of your repo, but they still land in the Lambda's plain
-environment — readable by anyone with access to the function's configuration. For
-true secrets (API keys, DB passwords), that's not enough. First-class secrets
-support is on the roadmap; until then, read them at runtime from a secret store
-(e.g. AWS SSM Parameter Store / Secrets Manager) inside your handler.
+`env()` keeps values out of your repo, but the values still land in the function's
+plain environment — a Lambda's environment variables, or an Azure Function App's
+application settings — readable by anyone with access to the function's
+configuration. For true secrets (API keys, DB passwords), that's not enough.
+First-class secrets support is on the roadmap; until then, read them at runtime
+from a secret store inside your handler (AWS SSM Parameter Store / Secrets
+Manager, or Azure Key Vault).
 
 ## Related
 
 - [Config file](../reference/config-file.md)
 - [Stages & environments](./stages-and-environments.md)
+- [Deploying to Azure](./deploying-to-azure.md#environment-variables)

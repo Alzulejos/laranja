@@ -56,7 +56,8 @@ pass a **wrapped** AWS schedule string — `cron(...)` or `rate(...)`:
 ```
 
 AWS cron has **six fields**: `cron(Minutes Hours Day-of-month Month Day-of-week
-Year)`.
+Year)`. It's an escape hatch, not an AWS lock-in — on Azure the expression is
+translated to NCRONTAB for you.
 
 A few examples:
 

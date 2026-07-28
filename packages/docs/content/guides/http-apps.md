@@ -6,9 +6,11 @@ order: 1
 
 # HTTP apps
 
-laranja deploys your whole HTTP app as a single proxy Lambda behind a public
-[Function URL](../reference/what-gets-deployed.md#http-app--proxy-lambda--function-url).
-laranja supports **Express** and **NestJS**.
+laranja deploys your whole HTTP app as **one function behind a public HTTPS
+endpoint** — every route you register is served by it. laranja supports
+**Express** and **NestJS**, on AWS and Azure; see
+[what gets deployed](../reference/what-gets-deployed.md#http-app--one-function-behind-a-public-url)
+for the resources on each.
 
 ## Declaring your app (the `http()` marker)
 
@@ -86,8 +88,8 @@ Two things to know:
 
 ## Routing, middleware, and `STAGE`
 
-Your app runs as-is inside Lambda. Standard Express features work — routing,
-middleware, JSON bodies, route params. The active
+Your app runs as-is inside the deployed function. Standard Express features work
+— routing, middleware, JSON bodies, route params. The active
 [stage](./stages-and-environments.md) is available as
 `process.env.STAGE`:
 
@@ -97,18 +99,18 @@ app.get("/whoami", (_req, res) => res.json({ stage: process.env.STAGE }));
 
 ## CORS and auth
 
-The Function URL is public with permissive CORS (all origins/methods/headers).
-Handle authentication and any stricter CORS rules **inside your app**, the same
-way you would anywhere else.
+The endpoint is public — laranja adds no auth layer, so handle authentication
+**inside your app**, the same way you would anywhere else. Cross-origin access
+is off by default and opt-in via [`cors`](../reference/config-file.md#cors) in
+your config (AWS today; on Azure, set CORS headers in your app).
 
 ## Compute (memory & timeout)
 
-The HTTP proxy Lambda's memory and timeout come from
-[`compute`](../reference/config-file.md#compute) in your config — the scaffold
-default is `{ memory: 256, timeout: 30 }`, and you can override it under the `http`
-key in [`resources`](../reference/config-file.md#resources). Long-running work
-belongs in a [cron job](./cron-jobs.md) or behind a [queue](./queues.md), not a
-request.
+The HTTP function's memory and timeout come from
+[`compute`](../reference/config-file.md#compute) in your config, overridable
+under the `http` key in [`resources`](../reference/config-file.md#resources).
+Long-running work belongs in a [cron job](./cron-jobs.md) or behind a
+[queue](./queues.md), not a request.
 
 ## Workers-only deployments
 
@@ -125,7 +127,7 @@ const config: LaranjaConfig = {
 ```
 
 With no marker, only your [`@Cron`](./cron-jobs.md) / [`@Queue`](./queues.md)
-handlers are deployed — no HTTP proxy, no Function URL.
+handlers are deployed — no HTTP function, no public endpoint.
 
 For a **workers-only Nest** app, there's no `http(bootstrap)` to build the DI
 container from, so declare your module with the
@@ -136,3 +138,4 @@ container from, so declare your module with the
 
 - [What gets deployed](../reference/what-gets-deployed.md)
 - [Cron jobs](./cron-jobs.md) · [Queues](./queues.md)
+- [Deploying to Azure](./deploying-to-azure.md)

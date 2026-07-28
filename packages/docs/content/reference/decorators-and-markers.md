@@ -7,7 +7,7 @@ order: 3
 # Decorators & markers
 
 All of these are imported from `@alzulejos/laranja-decorators`. They are **static markers**
-— the [scanner](../getting-started/how-it-works.md#1-scan) reads them at build time to
+— the [scanner](../getting-started/how-it-works.md#it-reads-your-code--it-never-runs-it) reads them at build time to
 shape your infrastructure. At runtime they are near-no-ops (they don't wrap or
 intercept your functions), so they're safe to leave in place.
 
@@ -25,8 +25,9 @@ Nest app can repoint its import at `@alzulejos/laranja-decorators` unchanged.
 
 ## `@Cron`
 
-Schedules a class method. Each `@Cron` becomes [its own Lambda + EventBridge
-rule](./what-gets-deployed.md#cron--lambda--eventbridge-rule).
+Schedules a class method. Each `@Cron` becomes [a scheduled
+function](./what-gets-deployed.md#cron--a-scheduled-function) — a Lambda +
+EventBridge rule on AWS, a timer trigger on Azure.
 
 ```ts
 function Cron(schedule: ScheduleInput): MethodDecorator
@@ -58,7 +59,7 @@ export class Jobs {
 | Field | Type | Description |
 |---|---|---|
 | `schedule` | `ScheduleInput` | A [`rate()`/`every()`](../guides/schedules.md) result, a `Schedule`, or a raw string. |
-| `id` | `string` _(optional)_ | Stable logical id. Defaults to `‹Class›-‹method›`; also drives the Lambda name. |
+| `id` | `string` _(optional)_ | Stable logical id. Defaults to `‹Class›-‹method›`; also drives the deployed function's name. |
 
 **`NestCronOptions`** (the second argument in the `@nestjs/schedule` form)
 
@@ -129,9 +130,10 @@ instead.
 
 ## `@Queue`
 
-Consumes messages from an SQS queue. Each `@Queue` becomes [an SQS queue +
-consumer Lambda](./what-gets-deployed.md#queue--sqs-queue--consumer-lambda).
-The handler is called once per message with the JSON-parsed body.
+Consumes messages from a queue. Each `@Queue` becomes [a queue + a consumer
+function](./what-gets-deployed.md#queue--a-queue--a-consumer-function) — SQS on
+AWS, an Azure Storage Queue on Azure. The handler is called once per message with
+the JSON-parsed body.
 
 ```ts
 function Queue(options: QueueOptions): MethodDecorator
@@ -154,8 +156,8 @@ export class Workers {
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `name` | `string` | _required_ | Queue name. A `.fifo` suffix marks a FIFO queue. |
-| `batchSize` | `number` | `10` | Max messages per consumer invocation. |
-| `fifo` | `boolean` | `false` | Force a FIFO queue (or end `name` with `.fifo`). When set, laranja appends `.fifo` to `name` if you left it off. |
+| `batchSize` | `number` | `10` | Max messages per consumer invocation. Host-wide on Azure. |
+| `fifo` | `boolean` | `false` | Force a FIFO queue (or end `name` with `.fifo`). When set, laranja appends `.fifo` to `name` if you left it off. **[AWS only](../guides/queues.md#fifo-queues).** |
 
 ---
 
@@ -181,9 +183,10 @@ queue({ name: "emails", batchSize: 10 }, sendEmail);
 
 The queue **producer** — get a handle to a declared queue and `.send()` messages
 to it. The counterpart to the [`@Queue`](#queue) / [`queue()`](#queue-marker)
-consumers. Unlike the markers, this does real work at runtime (a single SQS
-`SendMessage`); laranja injects the queue URL and grants `sqs:SendMessage` to
-every function, so there's nothing to configure.
+consumers. Unlike the markers, this does real work at runtime (a single send
+call). laranja wires the access up at deploy time — the queue URL plus
+`sqs:SendMessage` on AWS, the app's managed identity on Azure — so there's
+nothing to configure either way.
 
 ```ts
 function getQueue(name: string): LaranjaQueue
@@ -208,8 +211,8 @@ declared `name`; a send to an undeclared queue throws.
 
 | Field | Type | Applies to | Description |
 |---|---|---|---|
-| `groupId` | `string` | FIFO (**required**) | `MessageGroupId` — orders messages within a group. A FIFO send throws without it. |
-| `dedupId` | `string` | FIFO | `MessageDeduplicationId` — only needed when content-based dedup is off. |
+| `groupId` | `string` | FIFO (**required**) | `MessageGroupId` — orders messages within a group. A FIFO send throws without it. AWS only. |
+| `dedupId` | `string` | FIFO | `MessageDeduplicationId` — only needed when content-based dedup is off. AWS only. |
 | `delaySeconds` | `number` | Standard | Delay (0–900s) before the message becomes visible. Ignored by FIFO. |
 
 See [Queues → Sending messages](../guides/queues.md#sending-messages).
@@ -249,7 +252,7 @@ export default http(bootstrap);    // bootstrap: () => Promise<INestApplication>
 
 **NestJS only.** Declares the module laranja builds a dependency-injection
 context from, so class-based [`@Cron`](#cron) / [`@Queue`](#queue) providers
-resolve their injected dependencies at runtime (via
+resolve their injected dependencies at runtime on either provider (via
 `NestFactory.createApplicationContext`) instead of a bare `new`. The DI
 counterpart to [`http()`](#http); export it so the scanner can find it.
 

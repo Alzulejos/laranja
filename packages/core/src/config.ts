@@ -101,8 +101,8 @@ export interface LaranjaConfig {
    */
   projectId?: string;
   /**
-   * Target cloud. "aws" is fully supported; "azure" is HTTP-only (Express) today.
-   * Defaults to "aws".
+   * Target cloud. "aws" and "azure" both run Express and NestJS with HTTP, crons,
+   * queues and env; FIFO queues are AWS-only. Defaults to "aws".
    */
   provider?: CloudProvider;
   region?: string;

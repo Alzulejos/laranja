@@ -6,12 +6,11 @@ order: 2
 
 # Cron jobs
 
-A cron job is a function that runs on a schedule. On AWS each one becomes
-[its own Lambda plus an EventBridge rule](../reference/what-gets-deployed.md#cron--lambda--eventbridge-rule).
-
-> On **Azure**, the same `@Cron` / `cron()` code deploys as a **timer function
-> inside your one Function App** instead — see
-> [Deploying to Azure](./deploying-to-azure.md#crons) for the differences.
+A cron job is a function that runs on a schedule. The same `@Cron` / `cron()`
+code deploys to either provider — as
+[its own Lambda plus an EventBridge rule](../reference/what-gets-deployed.md#cron--a-scheduled-function)
+on AWS, or a timer-triggered function inside your Function App on Azure (see
+[Deploying to Azure](./deploying-to-azure.md#crons) for the differences).
 
 ## Class style — `@Cron`
 
@@ -40,7 +39,7 @@ export class Jobs {
 ```
 
 The handler's logical id defaults to `‹Class›-‹method›`; pass `id` to set a
-stable, explicit name (which also drives the Lambda's name).
+stable, explicit name (which also drives the deployed function's name).
 
 ## Function style — `cron()`
 
@@ -118,11 +117,11 @@ full set of options.
 
 ## Runtime behavior
 
-- Each cron runs in its **own Lambda**, isolated from your HTTP app and other
-  jobs.
-- Memory and timeout come from [`compute`](../reference/config-file.md#compute)
-  (default `{ memory: 256, timeout: 30 }`) and can be overridden per cron id in
-  [`resources`](../reference/config-file.md#resources).
+- On AWS each cron runs in its **own Lambda**, isolated from your HTTP app and
+  other jobs; on Azure it's a function in the shared Function App
+  ([why](./deploying-to-azure.md#nestjs-workers-on-azure)).
+- Memory and timeout come from [`compute`](../reference/config-file.md#compute),
+  overridable per cron id in [`resources`](../reference/config-file.md#resources).
 - All [config `env`](./environment-variables.md) and `STAGE` are
   available via `process.env`.
 
@@ -130,4 +129,4 @@ full set of options.
 
 - [Schedules](./schedules.md)
 - [`@Cron` / `cron()` reference](../reference/decorators-and-markers.md#cron)
-- [Queues](./queues.md)
+- [Queues](./queues.md) · [Deploying to Azure](./deploying-to-azure.md#crons)

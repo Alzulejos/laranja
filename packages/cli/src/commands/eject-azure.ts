@@ -4,13 +4,15 @@
  * Produces `infra/`:
  *   - main.json        the ARM template (their infrastructure, editable)
  *   - parameters.json  values for the code-discovered env("…") secrets
- *   - package.zip      the already-built code package (snapshot)
- *   - deploy.sh        `az deployment group create` + one-deploy the zip
+ *   - package*.zip     the already-built code packages (snapshots), ONE PER
+ *                      workload — an Azure project is one Function App per
+ *                      workload (the http() app, plus each workers() root)
+ *   - deploy.sh        `az deployment group create` + one-deploy each zip
  *   - README.md
  *
  * Deploying it needs only the Azure CLI + a login — no laranja, no Node, no
- * build step. The tradeoff (stated in the README): the zip is a snapshot, so
- * changing the code means rebuilding the package, which is laranja's job.
+ * build step. The tradeoff (stated in the README): the zips are a snapshot, so
+ * changing the code means rebuilding them, which is laranja's job.
  *
  * The ARM template comes from the server (`/eject`, entitlement-gated); the
  * config-specific files (deploy.sh, parameters) are written here since only the
@@ -27,13 +29,41 @@ import {
   ApiRequestError,
   apiErrorMessage,
   azureFunctionAppName,
+  azureWorkloads,
+  type AzureWorkload,
   type InfraIR,
 } from "@alzulejos/laranja-core";
-import { buildAzureEjectPackage } from "../pipeline.js";
+import { buildAzureEjectPackages } from "../pipeline.js";
 import { zipDir } from "../azure.js";
 import { scan } from "@alzulejos/laranja-scanner";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
+
+/**
+ * One ejected Function App: which app to publish to, and which zip holds its code.
+ * `http` drives which URL the script reports as the live one.
+ */
+export interface EjectedApp {
+  id: string;
+  appName: string;
+  zip: string;
+  http: boolean;
+}
+
+/**
+ * The apps this project ejects as. Mirrors the server's grouping exactly
+ * (`azureWorkloads` is the same function `synthAzure` names its apps from), so the
+ * script publishes to the apps the template actually creates.
+ */
+export function ejectedApps(name: string, stage: string, workloads: AzureWorkload[]): EjectedApp[] {
+  return workloads.map((w) => ({
+    id: w.id,
+    appName: azureFunctionAppName(name, stage, w.suffix),
+    // The primary workload keeps the familiar `package.zip`; roots get their own.
+    zip: w.suffix ? `package-${w.suffix.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.zip` : "package.zip",
+    http: w.http,
+  }));
+}
 
 export async function ejectAzure(projectDir: string, opts: { force?: boolean; stage?: string }): Promise<void> {
   const config = await loadConfig(projectDir, { stage: opts.stage });
@@ -53,19 +83,29 @@ export async function ejectAzure(projectDir: string, opts: { force?: boolean; st
     subscriptionId: config.azure!.subscriptionId,
     resourceGroup: config.azure!.resourceGroup,
   };
-  const functionApp = azureFunctionAppName(config.name, config.stage);
-
   // The ARM template is the server's to produce (entitlement-gated). Scan for the
   // IR to send; the paid call happens before the local build so a 403 costs
   // nothing.
   const ir = scan({ projectDir, config });
+  const apps = ejectedApps(config.name, config.stage, azureWorkloads(ir));
+  if (apps.length === 0) {
+    throw new Error("Nothing to eject — this project declares no http() app, crons, or queues.");
+  }
+
   step("server eject");
   let res;
   try {
     res = await postEject(
-      // A placeholder hash: the ARM template is asset-hash-independent (code ships
-      // via one-deploy, not a hash-named blob), but synthAzure requires one.
-      { project: ir.app.name, stage: ir.app.stage, artifact: "arm", ir, assets: { http: "ejected" } },
+      {
+        project: ir.app.name,
+        stage: ir.app.stage,
+        artifact: "arm",
+        ir,
+        // Placeholder hashes: the ARM template is asset-hash-independent (code ships
+        // via one-deploy, not a hash-named blob), but synthAzure requires one PER
+        // workload. Real hashes would mean building before this paid call.
+        assets: Object.fromEntries(apps.map((a) => [a.id, "ejected"])),
+      },
       apiKey,
       config.projectId,
     );
@@ -76,19 +116,27 @@ export async function ejectAzure(projectDir: string, opts: { force?: boolean; st
   const templateFile = res.files.find((f) => f.path.endsWith(".json"));
   if (!templateFile) throw new Error("Server didn't return an ARM template for eject.");
 
-  // Build + zip the code package locally (the bundler is client-side).
-  step("build package");
-  const { assetDir } = await buildAzureEjectPackage(projectDir, { stage: opts.stage });
+  // Build + zip the code packages locally (the bundler is client-side).
+  step("build packages");
+  const { assetDirsById } = await buildAzureEjectPackages(projectDir, { stage: opts.stage });
 
   mkdirSync(ejectDir, { recursive: true });
   writeFileSync(path.join(ejectDir, "main.json"), templateFile.contents);
   writeFileSync(path.join(ejectDir, "parameters.json"), buildParameters(ir));
-  writeFileSync(path.join(ejectDir, "deploy.sh"), buildDeployScript(target, functionApp), { mode: 0o755 });
-  writeFileSync(path.join(ejectDir, "README.md"), buildReadme(target, functionApp, ir));
-  await zipDir(assetDir, path.join(ejectDir, "package.zip"));
+  writeFileSync(path.join(ejectDir, "deploy.sh"), buildDeployScript(target, apps), { mode: 0o755 });
+  writeFileSync(path.join(ejectDir, "README.md"), buildReadme(target, apps, ir));
+  for (const app of apps) {
+    const assetDir = assetDirsById[app.id];
+    if (!assetDir) throw new Error(`Internal: no bundle built for workload "${app.id}".`);
+    await zipDir(assetDir, path.join(ejectDir, app.zip));
+  }
 
   const rel = path.relative(projectDir, ejectDir);
   console.log(`\nEjected to ${rel}/ — deploy it with just the Azure CLI:`);
+  if (apps.length > 1) {
+    ui.note(`${apps.length} function apps, one package each:`);
+    for (const a of apps) console.log(`    ${a.appName}  ←  ${a.zip}`);
+  }
   console.log(`  cd ${rel}`);
   console.log("  ./deploy.sh");
 }
@@ -108,14 +156,26 @@ function buildParameters(ir: InfraIR): string {
   )}\n`;
 }
 
-/** Self-contained deploy script: provision the infra, then one-deploy the code. */
-function buildDeployScript(target: { resourceGroup: string }, functionApp: string): string {
+/** Self-contained deploy script: provision the infra, then one-deploy each package. */
+export function buildDeployScript(target: { resourceGroup: string }, apps: EjectedApp[]): string {
+  // "<app>:<zip>" pairs — one per Function App the template creates. Each app has
+  // its OWN package, so every one needs its own publish call.
+  const pairs = apps.map((a) => `  "${a.appName}:${a.zip}"`).join("\n");
+  const httpApp = apps.find((a) => a.http);
+  const live = httpApp
+    ? `echo "✅ live: https://${httpApp.appName}.azurewebsites.net"`
+    : `echo "✅ published (no http app — crons/queues only)"`;
+
   return `#!/usr/bin/env bash
 # Deploy this project with only the Azure CLI. Run: az login (once), then ./deploy.sh
 set -euo pipefail
 
 RG="${target.resourceGroup}"
-APP="${functionApp}"
+
+# Each Function App and the package that belongs to it.
+APPS=(
+${pairs}
+)
 
 echo "→ provisioning infrastructure"
 az deployment group create \\
@@ -124,23 +184,40 @@ az deployment group create \\
   --parameters @parameters.json \\
   --output none
 
-echo "→ publishing code (one deploy)"
 # Flex Consumption only supports one deploy — the SCM /api/publish endpoint.
 TOKEN=$(az account get-access-token --resource https://management.azure.com --query accessToken -o tsv)
-curl -sS -X POST "https://$APP.scm.azurewebsites.net/api/publish?type=zip&RemoteBuild=false" \\
-  -H "Authorization: Bearer $TOKEN" \\
-  -H "Content-Type: application/zip" \\
-  --data-binary @package.zip
+for entry in "\${APPS[@]}"; do
+  APP="\${entry%%:*}"
+  ZIP="\${entry#*:}"
+  echo "→ publishing $ZIP → $APP"
+  curl -sS -X POST "https://$APP.scm.azurewebsites.net/api/publish?type=zip&RemoteBuild=false" \\
+    -H "Authorization: Bearer $TOKEN" \\
+    -H "Content-Type: application/zip" \\
+    --data-binary @"$ZIP"
+  echo
+done
 
-echo
-echo "✅ live: https://$APP.azurewebsites.net"
+${live}
 `;
 }
 
-function buildReadme(target: { subscriptionId: string; resourceGroup: string }, functionApp: string, ir: InfraIR): string {
+function buildReadme(
+  target: { subscriptionId: string; resourceGroup: string },
+  apps: EjectedApp[],
+  ir: InfraIR,
+): string {
   const envLines = ir.envKeys.length
     ? ir.envKeys.map((k) => `- \`${k}\` → set \`${armParamName(k)}\` in \`parameters.json\``).join("\n")
     : "_None._";
+  const httpApp = apps.find((a) => a.http);
+  const liveLine = httpApp
+    ? `Live at \`https://${httpApp.appName}.azurewebsites.net\`.`
+    : `This project has no \`http()\` app — its functions are crons/queues, with no public endpoint.`;
+  const appRows = apps
+    .map((a) => `| \`${a.appName}\` | ${a.http ? "HTTP app + non-DI handlers" : `\`workers()\` root \`${a.id}\``} | \`${a.zip}\` |`)
+    .join("\n");
+  const packageRows = apps.map((a) => `| \`${a.zip}\` | Built code for \`${a.appName}\`, at eject time. |`).join("\n");
+
   return `# ${ir.app.name} — ejected Azure infrastructure
 
 This folder is a self-contained copy of your app's Azure infrastructure. You own
@@ -155,11 +232,21 @@ az login                 # once
 ./deploy.sh
 \`\`\`
 
-That provisions the infrastructure from \`main.json\` and publishes the code in
-\`package.zip\`. Live at \`https://${functionApp}.azurewebsites.net\`.
+That provisions the infrastructure from \`main.json\` and publishes each package to
+its Function App. ${liveLine}
 
 - **Subscription:** ${target.subscriptionId}
 - **Resource group:** ${target.resourceGroup} (must already exist)
+
+## Function apps
+
+Azure runs one Function App **per workload** — your \`http()\` app, plus one for each
+\`workers()\` dependency-injection root, so each can have its own memory and scale.
+Every app has its own package, and \`deploy.sh\` publishes them all:
+
+| Function App | Hosts | Package |
+|---|---|---|
+${appRows}
 
 ## Files
 
@@ -167,8 +254,8 @@ That provisions the infrastructure from \`main.json\` and publishes the code in
 |------|-----------|
 | \`main.json\` | The ARM template — your infrastructure. Edit freely. |
 | \`parameters.json\` | Values for code-discovered \`env("…")\` secrets. |
-| \`package.zip\` | Your built code, at eject time. |
-| \`deploy.sh\` | Provision + publish, using only \`az\`. |
+${packageRows}
+| \`deploy.sh\` | Provision + publish every app, using only \`az\`. |
 
 ## Secrets
 
@@ -176,9 +263,9 @@ ${envLines}
 
 ## Changing your code
 
-\`package.zip\` is a **snapshot** taken at eject time. Editing your app means
-rebuilding the package (esbuild bundle + \`@azure/functions\` + \`node_modules\`) —
-that build is laranja's job, so for ongoing code changes keep deploying with
+The \`.zip\` packages are a **snapshot** taken at eject time. Editing your app means
+rebuilding them (esbuild bundle + \`@azure/functions\` + \`node_modules\`) — that build
+is laranja's job, so for ongoing code changes keep deploying with
 \`laranja deploy\`, or set up your own Azure Functions build. The **infrastructure**
 here is fully yours to edit and redeploy.
 

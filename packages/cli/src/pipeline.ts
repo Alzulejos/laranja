@@ -339,14 +339,17 @@ export async function buildAzurePlanTemplate(
  * call and no deployment row. Returns the IR and the bundled asset directory the
  * caller zips into the ejected project.
  */
-export async function buildAzureEjectPackage(
+export async function buildAzureEjectPackages(
   projectDir: string,
   env: BuildEnv,
-): Promise<{ ir: InfraIR; assetDir: string }> {
+): Promise<{ ir: InfraIR; assetDirsById: Record<string, string> }> {
   const { ir, handlers } = await prepareUpload(projectDir, env);
-  const http = handlers.find((h) => h.id === "http");
-  if (!http) throw new Error("Internal: no http handler bundled for eject.");
-  return { ir, assetDir: http.assetDir };
+  // One package per workload, exactly as a deploy builds them — an Azure project
+  // is one Function App PER workload, so an eject that shipped only the primary
+  // would leave every workers() root with no code. Keyed by workload id.
+  const assetDirsById: Record<string, string> = {};
+  for (const h of handlers) assetDirsById[h.id] = h.assetDir;
+  return { ir, assetDirsById };
 }
 
 export function printPlan(ir: InfraIR): void {

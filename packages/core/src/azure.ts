@@ -198,6 +198,31 @@ export function azurePoisonQueueEnvName(sourceQueueName: string): string {
   return `LARANJA_QUEUE_${sourceQueueName.replace(/[^A-Za-z0-9_]/g, "_")}_POISON`;
 }
 
+/**
+ * Physical Storage Queue name for a declared queue.
+ *
+ * Storage Queue rules: 3–63 chars, lowercase alphanumeric + hyphens. The storage
+ * account is dedicated per app+stage, so the sanitized logical name suffices — no
+ * app/stage prefix. Mirrors laranja-cdk's `queueResourceName` (see the duplication
+ * note above); both halves must derive the SAME name or the reported poison queue
+ * won't be the one Azure actually writes to.
+ */
+export function azureQueueResourceName(name: string): string {
+  const body = slug([name], 63);
+  // slug can't shrink below 3 without help: pad a too-short name so Azure accepts it.
+  return body.length >= 3 ? body : `${body}-q`.padEnd(3, "q").slice(0, 63);
+}
+
+/**
+ * The queue Azure dead-letters a source queue into. Not configurable — the host
+ * always moves a message that failed `maxDequeueCount` times to `<physical>-poison`.
+ * Named here so the deploy report can TELL the user where failures land, using the
+ * same derivation the synth writes into the app setting.
+ */
+export function azurePoisonQueueName(sourceQueueName: string): string {
+  return `${azureQueueResourceName(sourceQueueName)}-poison`;
+}
+
 /** A source queue's failures routed into another declared queue's consumer. */
 export interface AzurePoisonBinding {
   /** Source queue NAME. Azure moves its repeatedly-failing messages to `<name>-poison`. */

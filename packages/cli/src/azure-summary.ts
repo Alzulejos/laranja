@@ -16,6 +16,9 @@
 import {
   AZURE_HTTP_FUNCTION_NAME,
   azureAppInsightsName,
+  azureMaxDequeueCount,
+  azurePoisonBindings,
+  azurePoisonQueueName,
   azureWorkloads,
   describeSchedule,
   type DeployedResource,
@@ -45,8 +48,16 @@ export function printAzureFunctions(ir: InfraIR): void {
   for (const c of ir.crons) {
     rows.push({ name: c.id, kind: "Cron", detail: describeSchedule(c.schedule) });
   }
+  // Dead-lettering is invisible in the ARM diff (the poison queue is host behaviour
+  // plus an app setting), so the summary says where failures go and via which queue.
+  const wiredDlq = new Map(azurePoisonBindings(ir.queues).bindings.map((b) => [b.source, b.dlq]));
   for (const q of ir.queues) {
-    rows.push({ name: q.id, kind: "Queue", detail: `Storage Queue "${q.name}"` });
+    const dlq = wiredDlq.get(q.name);
+    const detail =
+      dlq === undefined
+        ? `Storage Queue "${q.name}"`
+        : `Storage Queue "${q.name}" · dlq → ${dlq} via "${azurePoisonQueueName(q.name)}"`;
+    rows.push({ name: q.id, kind: "Queue", detail });
   }
   if (rows.length === 0) return;
 
@@ -105,6 +116,23 @@ export function buildAzureResources(args: {
   const cronById = new Map(ir.crons.map((c) => [c.id, c]));
   const queueByName = new Map(ir.queues.map((q) => [q.name, q]));
 
+  // Dead-lettering, reported exactly like AWS's (`metadata.dlq.queue` = the TARGET
+  // queue's resource id) so the dashboard draws the same redrive edge for both
+  // providers with no provider-specific FE work. What differs is the mechanism, and
+  // that's what `poisonQueue` carries: Azure's dead-letter destination isn't
+  // configurable — the host moves failures to `<queue>-poison` and laranja binds an
+  // extra trigger there that drains into the declared DLQ's consumer. Naming it means
+  // a user who goes looking in the portal finds the queue their messages are in.
+  const poison = azurePoisonBindings(ir.queues);
+  const dlqBySource = new Map(poison.bindings.map((b) => [b.source, b.dlq]));
+  // A DLQ named by 2+ sources is deliberately left UNWIRED by the synth (see
+  // `azurePoisonBindings`). Those queues get no redrive edge — they'd claim a delivery
+  // that doesn't happen — and carry a warning instead, so the gap is visible in the
+  // dashboard rather than only in the deploy log the user has already scrolled past.
+  const unwired = new Map(
+    poison.conflicts.flatMap((c) => c.sources.map((s) => [s, c.dlq] as const)),
+  );
+
   const resources: DeployedResource[] = [];
   // Walk workloads so every row carries the app that actually runs it. `functionApp`
   // in the metadata is what lets the dashboard GROUP rows by app — the resources stay
@@ -145,6 +173,12 @@ export function buildAzureResources(args: {
       });
     }
 
+    // The retry ceiling before a message is poisoned is HOST-wide on Azure (one
+    // host.json per app), so it's resolved once per workload and reported as the value
+    // that actually applies to every queue in this app — not as each queue's request.
+    const owned = w.queueNames.map((n) => queueByName.get(n)).filter((q) => q !== undefined);
+    const { value: maxDequeueCount } = azureMaxDequeueCount(owned);
+
     for (const qName of w.queueNames) {
       const queue = queueByName.get(qName);
       if (!queue) continue;
@@ -153,11 +187,34 @@ export function buildAzureResources(args: {
       // `type: "queue"` matches the AWS report so the dashboard's queue→function graph
       // renders identically; fifo is always false (Storage Queues have no FIFO) and there's
       // no per-queue batchSize, so the metadata is intentionally thinner than SQS's.
+      const dlqTarget = dlqBySource.get(queue.name);
+      const dlqQueue = dlqTarget === undefined ? undefined : queueByName.get(dlqTarget);
+      const sharedDlq = unwired.get(queue.name);
       resources.push({
         name: queue.id,
         type: "queue",
         action,
-        metadata: { queueName: queue.name, fifo: false, functionApp: host },
+        metadata: {
+          queueName: queue.name,
+          fifo: false,
+          functionApp: host,
+          // Nodes are keyed by resource id, so the target is reported as the DLQ
+          // queue's id — the same name→id translation the AWS report does.
+          ...(dlqQueue && {
+            dlq: {
+              queue: dlqQueue.id,
+              ...(maxDequeueCount !== undefined && { maxReceiveCount: maxDequeueCount }),
+              poisonQueue: azurePoisonQueueName(queue.name),
+            },
+          }),
+          ...(sharedDlq !== undefined && {
+            warnings: [
+              `dlq "${sharedDlq}" is shared with another queue, so it isn't wired up on ` +
+                `Azure: failures land in "${azurePoisonQueueName(queue.name)}" unread. ` +
+                `Give this queue its own dlq to have them delivered.`,
+            ],
+          }),
+        },
         externalId: functionId(host, queue.name),
         externalUrl: null,
       });
@@ -168,9 +225,12 @@ export function buildAzureResources(args: {
   // on the first function resource — the http proxy when present, otherwise the first
   // cron/queue — so it's visible and never dropped.
   if (missingEnv.length && resources[0]) {
+    // Appended, not assigned: that first row may already carry its own warning (an
+    // unwired shared dlq), and overwriting it would silently drop it.
+    const existing = resources[0].metadata.warnings ?? [];
     resources[0].metadata = {
       ...resources[0].metadata,
-      warnings: [`env with no value: ${missingEnv.join(", ")}`],
+      warnings: [...existing, `env with no value: ${missingEnv.join(", ")}`],
     };
   }
 

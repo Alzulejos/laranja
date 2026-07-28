@@ -120,6 +120,40 @@ describe("azure reported resources", () => {
     expect(emails.externalUrl).toBeNull();
   });
 
+  test("a wired dlq is reported like AWS's, plus the poison queue it flows through", () => {
+    const resources = build({
+      queues: [{ ...queue("emails"), dlq: { queue: "failed", maxReceiveCount: 3 } }, queue("failed")],
+    });
+
+    const emails = resources.find((r) => r.name === "emails")!;
+    expect(emails.metadata.dlq).toEqual({
+      // The TARGET's resource id, so the dashboard draws the edge between two nodes.
+      queue: "failed",
+      maxReceiveCount: 3,
+      // Azure-only: where the host actually puts failures before laranja drains them.
+      poisonQueue: "emails-poison",
+    });
+    // The DLQ queue is an ordinary queue in its own right — no dlq of its own.
+    expect(resources.find((r) => r.name === "failed")!.metadata.dlq).toBeUndefined();
+  });
+
+  test("a dlq shared by two queues is reported as unwired, naming the unread poison queues", () => {
+    const resources = build({
+      queues: [
+        { ...queue("emails"), dlq: { queue: "failed", maxReceiveCount: 3 } },
+        { ...queue("sms"), dlq: { queue: "failed", maxReceiveCount: 3 } },
+        queue("failed"),
+      ],
+    });
+
+    for (const name of ["emails", "sms"]) {
+      const res = resources.find((r) => r.name === name)!;
+      // No redrive edge — the synth leaves these unwired, so claiming one would lie.
+      expect(res.metadata.dlq).toBeUndefined();
+      expect(res.metadata.warnings?.[0]).toContain(`"${name}-poison"`);
+    }
+  });
+
   test("missing env surfaces as a warning on the http resource only", () => {
     const resources = build({
       crons: [cron("poll", { kind: "rate", value: 1, unit: "hour" })],

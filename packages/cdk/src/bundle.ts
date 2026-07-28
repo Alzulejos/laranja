@@ -345,8 +345,8 @@ export async function bundleEntries(entries: GeneratedEntry[], opts: BundleOptio
     outdir: opts.buildDir,
     bundle: true,
     platform: "node",
-    // Flex Consumption runs Node 22; Lambda runs 20.
-    target: isAzure ? "node22" : "node20",
+    // Both providers run Node 22 (Azure Flex Consumption, Lambda nodejs22.x).
+    target: "node22",
     format: "cjs",
     // Azure resolves the entry through package.json `main`, which must point at
     // a real file — so emit `index.js` there (still CJS, since the generated

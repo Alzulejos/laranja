@@ -34,7 +34,7 @@ npm install @alzulejos/laranja-decorators     # used in your app code
 npm install -D @alzulejos/laranja             # the `laranja` command
 ```
 
-You'll also need **Node.js 20+**, credentials for your cloud on its standard chain (**AWS**: `aws configure`, SSO, or `AWS_*` env vars · **Azure**: `az login` or `AZURE_*`), and a **laranja API key** from the [dashboard](https://laranja.io) — `laranja init` wires it up and asks which cloud to target.
+You'll also need **Node.js 22+**, credentials for your cloud on its standard chain (**AWS**: `aws configure`, SSO, or `AWS_*` env vars · **Azure**: `az login` or `AZURE_*`), and a **laranja API key** from the [dashboard](https://laranja.io) — `laranja init` wires it up and asks which cloud to target.
 
 ## Express
 

@@ -32,7 +32,7 @@ const config: LaranjaConfig = { name: "my-api", projectId: "proj_…" };        
 const config: LaranjaConfig = { name: "my-api", projectId: "proj_…", provider: "azure", /* … */ };
 ```
 
-Requires Node 20+ and credentials for your provider on its standard chain — AWS
+Requires Node 22+ and credentials for your provider on its standard chain — AWS
 (`aws configure` / SSO / `AWS_*`) or Azure (`az login` / `AZURE_*`). The AWS CDK
 toolkit is embedded and Azure deploys via ARM, so there's nothing else to install.
 

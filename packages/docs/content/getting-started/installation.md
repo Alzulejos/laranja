@@ -10,7 +10,7 @@ order: 2
 
 Whichever cloud you target:
 
-- **Node.js 20 or newer.** Deployed functions run on the Node.js 20 runtime, and
+- **Node.js 22 or newer.** Deployed functions run on the Node.js 22 runtime, and
   the CLI targets the same.
 - **A laranja account + API key.** laranja synthesizes your deployment template on
   its server, so `plan`, `deploy`, and `eject` need an API key (created in the

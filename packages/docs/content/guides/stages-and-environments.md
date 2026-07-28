@@ -34,10 +34,11 @@ The flag wins over the config value, which is why the recommended setup keeps
 
 ## Each stage is its own stack
 
-The stage is part of the **stack name** (`‹name›-‹stage›`) and every resource
+The stage is part of the **deployment name** (`‹name›-‹stage›`) and every resource
 name (`‹name›-‹fn›-‹stage›`). So `--stage dev` and `--stage prod` produce two
-**independent CloudFormation stacks** that never collide — even in the same AWS
-account.
+**fully independent deployments** that never collide — even in the same account.
+(On AWS that's two CloudFormation stacks; on Azure, two independently-named sets
+of resources in your group.)
 
 ```
 my-api-dev     ← laranja deploy --stage dev
@@ -48,12 +49,12 @@ my-api-prod    ← laranja deploy --stage prod
 
 Both work, and they compose:
 
-1. **One account, multiple stages.** The stage suffix keeps the stacks separate.
-   Good for small projects or non-prod environments.
-2. **Separate accounts per stage.** Point each pipeline at different AWS
-   credentials (a dev account and a prod account). Here your **AWS credentials
-   are the real boundary**; the stack name can even repeat across accounts
-   without conflict.
+1. **One account, multiple stages.** The stage suffix keeps the deployments
+   separate. Good for small projects or non-prod environments.
+2. **Separate accounts per stage.** Point each pipeline at different cloud
+   credentials (a dev and a prod AWS account, or two Azure subscriptions /
+   resource groups). Here your **credentials are the real boundary**; the names
+   can even repeat across accounts without conflict.
 
 ## One pipeline per stage
 
@@ -75,8 +76,8 @@ to supply each environment's configuration.
 
 ## The `STAGE` env var
 
-The active stage is injected into every Lambda as `process.env.STAGE`, so your
-code can branch on it:
+The active stage is injected into every deployed function as `process.env.STAGE`,
+so your code can branch on it:
 
 ```ts
 const isProd = process.env.STAGE === "prod";

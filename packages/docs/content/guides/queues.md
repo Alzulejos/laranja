@@ -1,18 +1,16 @@
 ---
 title: Queues
-description: Process SQS messages with @Queue or queue(), including FIFO.
+description: Process queue messages with @Queue or queue(), including FIFO.
 order: 3
 ---
 
 # Queues
 
-A queue consumer processes messages from an SQS queue. Each one becomes
-[an SQS queue plus a consumer Lambda](../reference/what-gets-deployed.md#queue--sqs-queue--consumer-lambda).
-
-> On **Azure**, the same `@Queue` / `queue()` and `getQueue().send()` code deploys
-> as an **Azure Storage Queue** plus a queue-triggered function in the one Function
-> App. The one difference is **FIFO**, which is AWS-only — see the matrix below and
-> [Deploying to Azure](./deploying-to-azure.md#queues).
+A queue consumer processes messages from a queue. Each one becomes
+[a queue plus a consumer function](../reference/what-gets-deployed.md#queue--a-queue--a-consumer-function)
+— SQS on AWS, an Azure Storage Queue on Azure. The same `@Queue` / `queue()` and
+`getQueue().send()` code works on both; **FIFO** is the one capability that
+differs.
 
 | Capability | AWS (SQS) | Azure (Storage Queue) |
 |---|---|---|
@@ -22,6 +20,10 @@ A queue consumer processes messages from an SQS queue. Each one becomes
 | FIFO (`fifo` / `.fifo`, ordering, dedup) | ✅ | ❌ rejected at `plan`/`deploy` |
 | Dead-letter queue | ✅ `dlq` (queue you name) | ⚠️ automatic `‹queue›-poison` |
 | `batchSize`, `visibilityTimeout`, `messageRetention` | ✅ per-queue | ⚠️ ignored (host-wide or N/A) |
+
+The Azure column is detailed in
+[Deploying to Azure → Queues](./deploying-to-azure.md#queues); everything else on
+this page applies to both.
 
 ## Class style — `@Queue`
 
@@ -73,10 +75,9 @@ Standalone `queue()` functions don't need it.
   JSON-parsed**.
 - **Partial-batch failures** are enabled: if your handler throws for one message,
   only that message is retried — the rest of the batch is still acknowledged.
-- Consumer memory/timeout come from [`compute`](../reference/config-file.md#compute)
-  (default `{ memory: 256, timeout: 30 }`); the queue's visibility timeout is
-  derived to stay ≥ the consumer timeout (override it per queue via
-  [`resources`](../reference/config-file.md#resources)).
+- Consumer memory/timeout come from [`compute`](../reference/config-file.md#compute);
+  on AWS the queue's visibility timeout is derived to stay ≥ the consumer timeout
+  (override it per queue via [`resources`](../reference/config-file.md#resources)).
 
 ```ts
 @Queue({ name: "orders" })
@@ -89,9 +90,8 @@ async processOrder(body: unknown) {
 
 ## FIFO queues
 
-> **AWS only.** FIFO relies on SQS FIFO queues; Azure Storage Queues have no
-> ordering or deduplication, so a FIFO queue is rejected at `plan`/`deploy` time on
-> Azure. Use a standard queue there, or keep FIFO workloads on AWS.
+> **AWS only.** Azure Storage Queues have no ordering or deduplication, so a FIFO
+> queue is rejected at `plan`/`deploy` time there rather than silently downgraded.
 
 End the name with `.fifo` (or set `fifo: true`) for ordered, exactly-once
 processing. Content-based deduplication is enabled automatically:
@@ -151,12 +151,12 @@ scheduling, and job state stay with the queue and your consumer).
 await getQueue("orders.fifo").send(order, { groupId: order.customerId });
 ```
 
-> Prefer the raw SDK? The queue URL is also emitted as a stack output after
-> deploy and visible in the AWS console — send with `@aws-sdk/client-sqs`
+> Prefer the raw SDK? The queue is a plain queue in your account — on AWS its URL
+> is emitted as a stack output, so you can send with `@aws-sdk/client-sqs`
 > directly if you'd rather.
 
 ## Related
 
 - [`@Queue` / `queue()` reference](../reference/decorators-and-markers.md#queue)
-- [What gets deployed](../reference/what-gets-deployed.md#queue--sqs-queue--consumer-lambda)
-- [Cron jobs](./cron-jobs.md)
+- [What gets deployed](../reference/what-gets-deployed.md#queue--a-queue--a-consumer-function)
+- [Cron jobs](./cron-jobs.md) · [Deploying to Azure](./deploying-to-azure.md#queues)

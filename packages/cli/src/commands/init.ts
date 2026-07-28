@@ -139,7 +139,7 @@ export async function init(projectDir: string): Promise<void> {
     const provider =
       (await ui.select("Which cloud do you want to deploy to?", [
         { label: "AWS", value: "aws" as const },
-        { label: "Azure  (HTTP + Express today)", value: "azure" as const },
+        { label: "Azure  (no FIFO queues)", value: "azure" as const },
       ])) ?? "aws";
 
     let template = AWS_TEMPLATE;

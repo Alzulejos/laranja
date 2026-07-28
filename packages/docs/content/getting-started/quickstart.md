@@ -105,10 +105,16 @@ Because the app is marked with `http()` in code, the config stays minimal — th
 HTTP app is declared there, not in config. See the
 **[config reference](../reference/config-file.md)**.
 
+> **Deploying to Azure instead?** Everything below is identical — add
+> `provider: "azure"` and an [`azure`](../reference/config-file.md#azure) block
+> (or pick Azure when `init` prompts) and follow
+> **[Deploying to Azure](../guides/deploying-to-azure.md)**. The rest of this
+> page shows AWS output.
+
 ## 4. Preview the plan
 
 `plan` shows what a deploy would do: it synthesizes your template on the server,
-diffs it against what's deployed in your AWS account, and tags each resource
+diffs it against what's deployed in your account, and tags each resource
 **created / changed / unchanged**. It's **read-only** — nothing is applied, and it
 never counts against your deploy limit.
 
@@ -134,7 +140,7 @@ On this first run nothing is deployed yet, so everything shows as `+` created.
 npx laranja deploy
 ```
 
-The first deploy to a new account/region prompts you to **bootstrap** (a
+On AWS, the first deploy to a new account/region prompts you to **bootstrap** (a
 one-time setup in your account). When it finishes you'll see your live URL:
 
 ```
@@ -151,7 +157,7 @@ curl https://abc123.lambda-url.us-east-1.on.aws/
 ## 6. Iterate
 
 ```bash
-npx laranja logs            # tail CloudWatch logs (pick a function)
+npx laranja logs            # tail your functions' logs (pick a function)
 npx laranja plan            # see what a deploy would change
 npx laranja deploy          # ship again
 npx laranja destroy         # tear it all down

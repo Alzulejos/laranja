@@ -78,18 +78,12 @@ and [`destroy`](../reference/commands.md#destroy) all work against Azure too.
 
 ## Environment variables
 
-Environment variables behave exactly as described in
-[Environment variables](./environment-variables.md) — both the static `env` map
-and code-discovered `env("…")` values. On Azure they land in the Function App's
-**application settings** instead of a Lambda's environment, and are available
-through `process.env` the same way. The same rules apply: missing values only
-warn (pass `--strict` to fail), and previously deployed values are kept on a
-re-deploy that doesn't re-supply them.
-
-> Application settings are stored in plaintext, readable by anyone with access to
-> the Function App's configuration — the same caveat as AWS Lambda env. For true
-> secrets, read them at runtime from a secret store (Azure Key Vault) inside your
-> handler. First-class secrets support is on the roadmap.
+[Environment variables](./environment-variables.md) work exactly as documented
+there — the static `env` map, code-discovered `env("…")` values, `--strict`, and
+the [secrets caveat](./environment-variables.md#secrets) all carry over
+unchanged. The only Azure difference: they land in the Function App's
+**application settings** rather than a Lambda's environment, and are read through
+`process.env` the same way.
 
 ## Crons
 

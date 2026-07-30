@@ -1,16 +1,20 @@
 ---
 title: Cron jobs
-description: Run functions on a schedule with @Cron or cron().
+seoTitle: Run NestJS and Express cron jobs on AWS Lambda
+description: Deploy scheduled jobs from your Express or NestJS code with @Cron or cron(). Each job becomes its own Lambda plus an EventBridge rule on AWS, or a timer-triggered function on Azure.
 order: 2
 ---
 
 # Cron jobs
 
-A cron job is a function that runs on a schedule. The same `@Cron` / `cron()`
-code deploys to either provider — as
+To run a scheduled job in the cloud, decorate a method with `@Cron` (or wrap a
+function in `cron()`) and give it a schedule. On deploy, each job becomes
 [its own Lambda plus an EventBridge rule](../reference/what-gets-deployed.md#cron--a-scheduled-function)
-on AWS, or a timer-triggered function inside your Function App on Azure (see
-[Deploying to Azure](./deploying-to-azure.md#crons) for the differences).
+on AWS, or a timer-triggered function inside your Function App on Azure. Nothing
+else runs to keep them alive — no always-on server, no scheduler process.
+
+The same `@Cron` / `cron()` code deploys to either provider; see
+[Deploying to Azure](./deploying-to-azure.md#crons) for the differences.
 
 ## Class style — `@Cron`
 

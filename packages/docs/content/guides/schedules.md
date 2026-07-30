@@ -1,14 +1,16 @@
 ---
 title: Schedules
-description: The rate() and every() builders, and raw schedule expressions.
+seoTitle: Cron schedule syntax for EventBridge and Azure timers
+description: Define job schedules with the rate() and every() builders, or a raw cron expression. laranja lowers them to an EventBridge expression on AWS and NCRONTAB on Azure.
 order: 4
 ---
 
 # Schedules
 
-Schedules drive [cron jobs](./cron-jobs.md). laranja stores them in a
-**provider-neutral** form, so prefer the builders — they're portable across
-clouds. A raw expression string is available as an escape hatch.
+A schedule tells a [cron job](./cron-jobs.md) when to run. Use the `rate()` and
+`every()` builders — laranja stores them **provider-neutrally** and lowers them to
+an EventBridge expression on AWS or NCRONTAB on Azure, so the same code is
+portable. A raw expression string is available as an escape hatch.
 
 > **Across providers:** on AWS a schedule lowers to an EventBridge expression; on
 > **Azure** it lowers to **NCRONTAB** for a timer trigger. The builders are exact

@@ -1,10 +1,15 @@
 ---
 title: Installation
-description: Prerequisites and how to add laranja to a project.
+seoTitle: Install laranja and connect AWS or Azure credentials
+description: Add laranja to a Node.js project — prerequisites, the CLI and decorators packages, and how it uses your existing AWS or Azure credentials.
 order: 2
 ---
 
 # Installation
+
+Install the CLI, add the decorators package, and point laranja at a cloud account
+using the credentials already on your machine. Nothing is uploaded to laranja
+beyond the deployment template it synthesizes for you.
 
 ## Prerequisites
 

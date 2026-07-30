@@ -1,16 +1,21 @@
 ---
 title: HTTP apps
-description: Deploy your HTTP app behind a public HTTPS endpoint.
+seoTitle: Deploy an Express or NestJS app to AWS Lambda
+description: Deploy an Express or NestJS app to AWS Lambda or Azure Functions behind a public HTTPS endpoint. One function serves every route — no YAML, no API Gateway to configure.
 order: 1
 ---
 
 # HTTP apps
 
-laranja deploys your whole HTTP app as **one function behind a public HTTPS
-endpoint** — every route you register is served by it. laranja supports
-**Express** and **NestJS**, on AWS and Azure; see
+To deploy an Express or NestJS app, mark your app factory with `http()` and run
+`laranja deploy`. laranja bundles the app into **one function behind a public
+HTTPS endpoint** — a Lambda with a Function URL on AWS, an HTTP-triggered
+function on Azure — and every route you registered is served by it. No API
+Gateway to wire up, no YAML, no handler rewriting.
+
+The same app code targets either provider; see
 [what gets deployed](../reference/what-gets-deployed.md#http-app--one-function-behind-a-public-url)
-for the resources on each.
+for the exact resources on each.
 
 ## Declaring your app (the `http()` marker)
 

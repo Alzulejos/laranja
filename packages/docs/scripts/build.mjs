@@ -43,6 +43,10 @@ const pages = files
       slug,
       section: sectionOf(slug),
       title: data.title ?? slug,
+      // Optional query-shaped <title> for search engines. Kept separate from
+      // `title` because that one is also the sidebar label, which needs to stay
+      // short and scannable.
+      ...(data.seoTitle ? { seoTitle: data.seoTitle } : {}),
       description: data.description ?? "",
       order: data.order ? Number(data.order) : 999,
       body,
@@ -114,7 +118,10 @@ const dts = `export interface DocPage {
   slug: string;
   /** Top-level folder ("" for top-level files). */
   section: string;
+  /** Short label — used for the sidebar, breadcrumbs, and prev/next. */
   title: string;
+  /** Query-shaped page title for search engines. Falls back to the title field. */
+  seoTitle?: string;
   description: string;
   order: number;
   /** Markdown body with frontmatter stripped. */

@@ -1,13 +1,17 @@
 ---
 title: How it works
-description: How laranja turns your code into a running app in your own cloud account.
+seoTitle: How laranja turns your code into cloud infrastructure
+description: laranja statically reads your Express or NestJS source to discover routes, crons, and queues, then synthesizes a CloudFormation or ARM template your own CLI deploys. It never runs your code.
 order: 4
 ---
 
 # How it works
 
-You write your app; laranja deploys it to your own cloud account. Two things are
-worth knowing about how it does that.
+laranja **reads** your source to find your HTTP app, cron jobs, queue consumers,
+and env vars, then synthesizes a deployment template — CloudFormation on AWS, ARM
+on Azure — that your local CLI applies with your own credentials. It never
+executes your code, and it never holds your cloud keys. Two things are worth
+knowing about that.
 
 ## It reads your code — it never runs it
 

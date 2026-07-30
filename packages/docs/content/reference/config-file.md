@@ -1,6 +1,7 @@
 ---
 title: Config file
-description: Every field in laranja.config.ts, with defaults and behavior.
+seoTitle: laranja.config.ts reference — every field and default
+description: Every field in laranja.config.ts with its default and behavior — provider, region, stage, env, cors, monitoring, and per-resource compute tuning.
 order: 2
 ---
 

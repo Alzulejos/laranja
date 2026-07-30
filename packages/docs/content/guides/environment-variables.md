@@ -1,14 +1,17 @@
 ---
 title: Environment variables
-description: Declare env vars in config or in code, and supply their values per stage.
+seoTitle: Set environment variables and secrets for Lambda
+description: Declare environment variables in laranja.config.ts or in code with env(), and supply different values per stage. Available through process.env in every deployed function.
 order: 5
 ---
 
 # Environment variables
 
-Every function laranja deploys receives a set of environment variables, available
-through `process.env` as usual — a Lambda's environment on AWS, the Function
-App's application settings on Azure. There are two ways to declare them.
+Every function laranja deploys receives environment variables through
+`process.env` exactly as it would locally — a Lambda's environment on AWS, the
+Function App's application settings on Azure. Declare them either as static
+values in your config or in code with `env()`, and give each stage its own
+values.
 
 ## Static values in config
 

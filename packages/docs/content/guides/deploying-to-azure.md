@@ -1,14 +1,16 @@
 ---
 title: Deploying to Azure
-description: Deploy an Express or NestJS app and its environment variables to your own Azure subscription.
+seoTitle: Deploy an Express or NestJS app to Azure Functions
+description: Deploy an Express or NestJS app, its cron jobs, and its queue consumers to Azure Functions in your own subscription. Set provider to azure — the app code is unchanged.
 order: 7
 ---
 
 # Deploying to Azure
 
-laranja can deploy to **your own Azure subscription** as an alternative to AWS.
-The model is the same one you already know — you write the app, laranja reads the
-code and ships the infrastructure — only the back half targets Azure instead.
+To deploy to Azure, set `provider: "azure"` in your config and run
+`laranja deploy`. Your app, its `@Cron` jobs, and its `@Queue` consumers land in
+**your own Azure subscription** as Function Apps — the app code is identical to
+the AWS path. Only the back half of laranja changes.
 
 > **What's supported today:** **Express** apps with **HTTP**, **crons** (`@Cron` /
 > `cron()`), **queues** (`@Queue` / `queue()`, backed by Azure Storage Queues —

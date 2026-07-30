@@ -1,6 +1,7 @@
 ---
 title: Troubleshooting
-description: Known issues and their fixes.
+seoTitle: laranja troubleshooting — NestJS webpack and deploy errors
+description: Known laranja issues and their fixes, including the NestJS webpack builder renaming your bootstrap export and causing deploys to fail entry resolution.
 order: 9
 ---
 

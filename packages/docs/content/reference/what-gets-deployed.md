@@ -1,6 +1,7 @@
 ---
 title: What gets deployed
-description: The exact resources laranja creates on each provider, and how they're named.
+seoTitle: What laranja creates in your AWS or Azure account
+description: The exact resources laranja provisions on each provider and how they're named — Lambdas, Function URLs, EventBridge rules, SQS queues, Function Apps, and Storage Queues.
 order: 4
 ---
 

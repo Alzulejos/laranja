@@ -1,6 +1,7 @@
 ---
 title: Decorators & markers
-description: API reference for @Cron, @Queue, cron, queue, getQueue, and http.
+seoTitle: "@Cron, @Queue, cron(), queue() and http() API reference"
+description: API reference for laranja's static markers — @Cron, @Queue, cron(), queue(), getQueue(), http(), and env() — with every option and its default.
 order: 3
 ---
 

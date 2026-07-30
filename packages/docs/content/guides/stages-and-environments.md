@@ -1,14 +1,16 @@
 ---
 title: Stages & environments
-description: Run dev, staging, and prod from one codebase with --stage.
+seoTitle: Deploy dev, staging, and prod from one codebase
+description: Run fully independent dev, staging, and prod deployments from the same codebase with --stage. Each stage gets its own resources and its own environment variable values.
 order: 6
 ---
 
 # Stages & environments
 
-A **stage** is a named environment — `dev`, `staging`, `prod`, or anything you
-like. laranja makes each stage a fully independent deployment from the same
-codebase.
+To run separate environments, pass `--stage` (or set it in config): every stage
+is a **fully independent deployment** from the same codebase, with its own
+functions, queues, schedules, and environment variable values. `dev`, `staging`,
+`prod`, or any name you like — nothing is shared between them.
 
 ## Setting the stage
 

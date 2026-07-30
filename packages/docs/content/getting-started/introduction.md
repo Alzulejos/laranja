@@ -1,16 +1,17 @@
 ---
 title: Introduction
-description: What laranja is, the problem it solves, and the principles behind it.
+seoTitle: laranja — deploy Express and NestJS to your own cloud
+description: laranja is a code-first deploy tool for Node.js. It reads your Express or NestJS app — routes, cron jobs, queues — and provisions the matching infrastructure in your own AWS or Azure account.
 order: 1
 ---
 
 # Introduction
 
-laranja is a **code-first deploy tool** for Node.js apps. You write your
-application — an Express or NestJS app, some scheduled jobs, some queue consumers
-— and laranja deploys it to **your own cloud account**. There is no
-infrastructure project to maintain, no YAML to write, and no cloud console to
-click through.
+laranja is a **code-first deploy tool** for Node.js apps. It reads your Express or
+NestJS source — the routes you registered, the jobs you scheduled, the queue
+consumers you declared — and provisions the matching infrastructure in **your own
+AWS or Azure account**. No infrastructure project to maintain, no YAML, no cloud
+console, and no credentials handed to a third party.
 
 > laranja supports **Express** and **NestJS**, on **AWS** and **Azure** — the
 > same app code either way. Internally your app is reduced to a framework- and

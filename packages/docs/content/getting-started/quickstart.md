@@ -1,13 +1,15 @@
 ---
 title: Quickstart
-description: From an empty folder to a live HTTPS endpoint in a few minutes.
+seoTitle: Deploy a Node.js API to your own AWS account in minutes
+description: Go from an empty folder to a live HTTPS endpoint, a scheduled job, and a queue consumer running in your own AWS account — with one laranja deploy.
 order: 3
 ---
 
 # Quickstart
 
-This walks you from zero to a deployed app with an HTTP endpoint, a scheduled
-job, and a queue consumer.
+This takes you from an empty folder to a live HTTPS endpoint in your own AWS
+account, plus a scheduled job and a queue consumer, in a few minutes. You need
+Node.js 22, a laranja API key, and AWS credentials on your machine.
 
 ## 1. Create a project
 

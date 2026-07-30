@@ -1,6 +1,7 @@
 ---
 title: CLI commands
-description: Every laranja command and flag.
+seoTitle: laranja CLI reference — deploy, plan, destroy, logs, eject
+description: Every laranja command and flag: init, deploy, plan, destroy, logs, eject, and logout. Each works identically on AWS and Azure.
 order: 1
 ---
 

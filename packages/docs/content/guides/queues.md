@@ -1,16 +1,23 @@
 ---
 title: Queues
-description: Process queue messages with @Queue or queue(), including FIFO.
+seoTitle: NestJS and Express queue consumers on AWS SQS
+description: Process background jobs from your Express or NestJS code with @Queue or queue(). Each consumer becomes an SQS queue plus a Lambda on AWS, or an Azure Storage Queue — no Redis to run.
 order: 3
 ---
 
 # Queues
 
-A queue consumer processes messages from a queue. Each one becomes
+To process background jobs, decorate a method with `@Queue` (or wrap a function
+in `queue()`) and send messages with `getQueue().send()`. Each consumer becomes
 [a queue plus a consumer function](../reference/what-gets-deployed.md#queue--a-queue--a-consumer-function)
-— SQS on AWS, an Azure Storage Queue on Azure. The same `@Queue` / `queue()` and
-`getQueue().send()` code works on both; **FIFO** is the one capability that
-differs.
+— SQS plus a Lambda on AWS, an Azure Storage Queue plus a queue-triggered
+function on Azure. The queue is managed by your cloud provider, so there is no
+Redis instance to run or pay for.
+
+This is infrastructure glue, not a job framework: you get delivery, retries, and
+a dead-letter queue, not the scheduling and workflow features of something like
+BullMQ. The same `@Queue` / `queue()` code works on both providers; **FIFO** is
+the one capability that differs.
 
 | Capability | AWS (SQS) | Azure (Storage Queue) |
 |---|---|---|

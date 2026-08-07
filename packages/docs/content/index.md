@@ -33,6 +33,7 @@ npx laranja deploy
 - **[Environment variables](./guides/environment-variables.md)** — `env`, `STAGE`, and resolution.
 - **[Stages & environments](./guides/stages-and-environments.md)** — dev / staging / prod with one codebase.
 - **[Deploying to Azure](./guides/deploying-to-azure.md)** — target your own Azure subscription, and what differs from AWS.
+- **[Migrating from a PaaS](./guides/migrating-from-a-paas.md)** — move off Vercel, Railway, Render, or Heroku into your own account.
 
 ## Reference
 

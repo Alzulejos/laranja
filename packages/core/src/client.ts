@@ -21,6 +21,8 @@ import {
   type DeploymentFailureReport,
   type ApiError,
   type ApiErrorCode,
+  type CloudCredentialsRequest,
+  type CloudCredentialsResponse,
 } from "./api.js";
 import { createRequire } from "node:module";
 import { loadStoredApiKey } from "./auth.js";
@@ -306,6 +308,27 @@ export function postReport(
     baseUrl,
     body: report,
   });
+}
+
+/**
+ * `POST /v1/cloud-credentials` — short-lived, resource-group-scoped cloud
+ * credentials for a managed (`provider: "laranja"`) project.
+ *
+ * The first call for a stage provisions its resource group and identity server
+ * side, so it can take ~15s; later calls are immediate. The deploy itself still
+ * runs locally — this only lends it credentials.
+ */
+export function postCloudCredentials(
+  body: CloudCredentialsRequest,
+  apiKey: string,
+  projectId: string,
+  baseUrl?: string,
+): Promise<CloudCredentialsResponse> {
+  return apiRequest<CloudCredentialsResponse>(
+    "POST",
+    ENDPOINTS.cloudCredentials,
+    { apiKey, projectId, baseUrl, body },
+  );
 }
 
 /**

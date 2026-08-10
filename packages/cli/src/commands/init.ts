@@ -38,6 +38,28 @@ const config: TypedLaranjaConfig = {
 export default config;
 `;
 
+/**
+ * Managed-hosting config. No cloud block at all — that is the whole point: the
+ * subscription, resource group and credentials are laranja's, resolved at deploy.
+ */
+const MANAGED_TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
+
+const config: TypedLaranjaConfig = {
+  // Both filled in from the dashboard project you pick during \`laranja init\`.
+  name: "",
+  // From your laranja dashboard — identifies this project on the server, and
+  // (on managed hosting) which infrastructure your deploys land in.
+  projectId: "",
+  // Managed hosting: no cloud account of your own to set up. Deploys still run
+  // from your machine, and \`laranja eject\` still hands you infra you own.
+  provider: "laranja",
+  env: {},
+  compute: { memory: 512, timeout: 30 },
+};
+
+export default config;
+`;
+
 /** Azure config. `__SUBSCRIPTION__`/`__RESOURCE_GROUP__` are filled in by init. */
 const AZURE_TEMPLATE = `import type { TypedLaranjaConfig } from "./laranja.types.js";
 
@@ -137,12 +159,13 @@ export async function init(projectDir: string): Promise<void> {
     // credential-based account discovery, so collect its required identifiers now
     // — that's also what lets the preflight below actually check the environment.
     const provider =
-      (await ui.select("Which cloud do you want to deploy to?", [
+      (await ui.select("Where do you want to deploy?", [
+        { label: "laranja  (managed — no cloud account needed)", value: "laranja" as const },
         { label: "AWS", value: "aws" as const },
         { label: "Azure  (no FIFO queues)", value: "azure" as const },
       ])) ?? "aws";
 
-    let template = AWS_TEMPLATE;
+    let template = provider === "laranja" ? MANAGED_TEMPLATE : AWS_TEMPLATE;
     if (provider === "azure") {
       const subscriptionId =
         (await ui.promptText("Azure subscription id (az account show --query id -o tsv):")) ?? "__SUBSCRIPTION__";

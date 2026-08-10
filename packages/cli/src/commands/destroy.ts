@@ -1,4 +1,4 @@
-import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment } from "@alzulejos/laranja-core";
+import { loadConfig, stackName, resolveApiKey, postDestroy, patchDeployment, usesAzureExecutor } from "@alzulejos/laranja-core";
 import { getAccountId, deleteStack } from "../aws.js";
 import { destroyAzure } from "./destroy-azure.js";
 import { preflightOrAbort } from "../preflight.js";
@@ -18,7 +18,7 @@ export async function destroy(projectDir: string, opts: { stage?: string } = {})
   if (!(await preflightOrAbort(config, "destroy"))) return;
 
   // Dispatch before any AWS-specific work (account resolution, CloudFormation).
-  if (config.provider === "azure") {
+  if (usesAzureExecutor(config.provider)) {
     return destroyAzure(projectDir, opts);
   }
 

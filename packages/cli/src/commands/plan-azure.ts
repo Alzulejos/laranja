@@ -22,6 +22,7 @@ import { azureWhatIf, type PlannedChange } from "../azure.js";
 import { printAzureFunctions } from "../azure-summary.js";
 import { step, note } from "../diagnostics.js";
 import * as ui from "../ui.js";
+import { resolveAzureTarget } from "../managed.js";
 
 /** What-if change types that represent an actual change (vs no-op). */
 const CHANGED = new Set(["Create", "Delete", "Modify", "Deploy"]);
@@ -32,10 +33,7 @@ export async function planAzure(projectDir: string, opts: { stage?: string } = {
 
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
-  const target = {
-    subscriptionId: config.azure!.subscriptionId,
-    resourceGroup: config.azure!.resourceGroup,
-  };
+  const target = await resolveAzureTarget(config);
   note({ project: config.name, stage: config.stage, ...target });
 
   ui.header(`plan ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);

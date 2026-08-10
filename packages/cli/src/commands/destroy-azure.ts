@@ -34,14 +34,12 @@ import { reportSafely } from "../lifecycle.js";
 import { step, note } from "../diagnostics.js";
 import { confirm } from "../io.js";
 import * as ui from "../ui.js";
+import { resolveAzureTarget } from "../managed.js";
 
 export async function destroyAzure(projectDir: string, opts: { stage?: string } = {}): Promise<void> {
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
-  const target = {
-    subscriptionId: config.azure!.subscriptionId,
-    resourceGroup: config.azure!.resourceGroup,
-  };
+  const target = await resolveAzureTarget(config);
 
   // Same fail-closed gate as the AWS path: the dashboard call authenticates and
   // authorizes before anything is deleted.

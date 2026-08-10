@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { loadConfig, resolveApiKey, postEject, ApiRequestError, apiErrorMessage } from "@alzulejos/laranja-core";
+import { loadConfig, resolveApiKey, postEject, ApiRequestError, apiErrorMessage, usesAzureExecutor } from "@alzulejos/laranja-core";
 import { scan } from "@alzulejos/laranja-scanner";
 import { generateEntries } from "@alzulejos/laranja-runtime";
 import { writeResourceTypes } from "../resource-types.js";
@@ -18,7 +18,7 @@ export async function eject(projectDir: string, opts: { force?: boolean; stage?:
   note({ project: config.name, stage: config.stage });
 
   // Azure ejects an ARM + az-only project, not a CDK one.
-  if (config.provider === "azure") {
+  if (usesAzureExecutor(config.provider)) {
     return ejectAzure(projectDir, opts);
   }
 

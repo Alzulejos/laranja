@@ -47,6 +47,8 @@ export const ENDPOINTS = {
   eject: `${API_PREFIX}/eject`,
   /** POST — a CLI failure report (free-form), scoped to the user + project. */
   report: `${API_PREFIX}/report`,
+  /** POST — short-lived cloud credentials for a managed (`provider: "laranja"`) project. */
+  cloudCredentials: `${API_PREFIX}/cloud-credentials`,
 } as const;
 
 /* -------------------------------------------------------------------------- */
@@ -362,6 +364,44 @@ export interface DestroyRequest {
 /** `POST /v1/deployment/destory` response — the new teardown row's id. */
 export interface DestroyResponse {
   deploymentId: string;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Managed hosting (`provider: "laranja"`)                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Which cloud API a minted token is for. Deploying and publishing the package
+ * both use `arm`; `laranja logs` reads Log Analytics, a different audience — one
+ * token cannot serve both.
+ */
+export type CloudTokenAudience = "arm" | "logs";
+
+/**
+ * `POST /v1/cloud-credentials` body.
+ *
+ * Managed projects have no cloud account of their own: the server owns the
+ * subscription and lends the CLI a short-lived, resource-group-scoped token so
+ * the deploy still runs locally. The first call for a stage also provisions its
+ * resource group and identity, so it is slow once and fast thereafter.
+ */
+export interface CloudCredentialsRequest {
+  stage: string;
+  audience?: CloudTokenAudience;
+}
+
+/** `POST /v1/cloud-credentials` response — where to deploy, and what with. */
+export interface CloudCredentialsResponse {
+  target: {
+    subscriptionId: string;
+    resourceGroup: string;
+    /** The group's real Azure region, e.g. "westus2". */
+    location: string;
+  };
+  /** Bearer token for the requested audience. Short-lived (about an hour). */
+  token: string;
+  /** ISO timestamp; the CLI re-requests rather than letting a call 401. */
+  expiresOn: string;
 }
 
 /**

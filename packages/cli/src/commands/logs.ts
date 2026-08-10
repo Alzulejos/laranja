@@ -3,7 +3,7 @@ import {
   StartLiveTailCommand,
   FilterLogEventsCommand,
 } from "@aws-sdk/client-cloudwatch-logs";
-import { loadConfig, stackName } from "@alzulejos/laranja-core";
+import { loadConfig, stackName, usesAzureExecutor } from "@alzulejos/laranja-core";
 import { note } from "../diagnostics.js";
 import { getAccountId, listStackLambdas, type DeployedLambda, type LambdaKind } from "../aws.js";
 import { applyAwsEnv, requireRegion } from "../io.js";
@@ -29,7 +29,7 @@ export async function logs(projectDir: string, opts: LogsOptions = {}): Promise<
   const config = await loadConfig(projectDir, { stage: opts.stage });
 
   // Azure reads logs from Application Insights, not CloudWatch.
-  if (config.provider === "azure") {
+  if (usesAzureExecutor(config.provider)) {
     return logsAzure(projectDir, opts);
   }
 

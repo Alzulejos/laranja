@@ -1,5 +1,5 @@
 import { Toolkit, StackSelectionStrategy } from "@aws-cdk/toolkit-lib";
-import { loadConfig, resolveApiKey } from "@alzulejos/laranja-core";
+import { loadConfig, resolveApiKey, usesAzureExecutor } from "@alzulejos/laranja-core";
 import { buildPlanAssembly } from "../pipeline.js";
 import { preflightOrAbort } from "../preflight.js";
 import { planAzure } from "./plan-azure.js";
@@ -51,7 +51,7 @@ export async function plan(projectDir: string, opts: { stage?: string } = {}): P
   }
 
   // Azure previews via ARM what-if, not a CloudFormation stack diff.
-  if (config.provider === "azure") {
+  if (usesAzureExecutor(config.provider)) {
     return planAzure(projectDir, { stage: opts.stage });
   }
 

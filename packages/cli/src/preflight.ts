@@ -12,7 +12,7 @@
  * everything passed but the caller decides what to do with a partial result.
  */
 
-import type { LaranjaConfig } from "@alzulejos/laranja-core";
+import { resolveApiKey, type LaranjaConfig } from "@alzulejos/laranja-core";
 import { managementToken, azureResourceGroupLocation } from "./azure.js";
 import { getAccountId } from "./aws.js";
 import * as ui from "./ui.js";
@@ -56,8 +56,16 @@ export async function runPreflight(
   const provider = config.provider ?? "aws";
   ui.header(`preflight · ${provider}`);
 
+  // Managed hosting has nothing on the user's side to check — no credentials, no
+  // subscription, no resource group. The server owns all of it, and the failures
+  // preflight exists to pre-empt (unregistered providers, a missing group, a
+  // region that refuses new customers) simply cannot happen here.
   const checks =
-    provider === "azure" ? await azureChecks(config, purpose) : await awsChecks(config);
+    provider === "laranja"
+      ? await managedChecks(config)
+      : provider === "azure"
+        ? await azureChecks(config, purpose)
+        : await awsChecks(config);
 
   for (const c of checks) {
     const icon = c.status === "ok" ? ui.green("✓") : c.status === "fail" ? ui.red("✗") : ui.dim("?");
@@ -108,6 +116,41 @@ async function awsChecks(config: LaranjaConfig): Promise<CheckResult[]> {
       });
     }
   }
+
+  return checks;
+}
+
+/**
+ * Preflight for managed hosting: the only prerequisites are the two things that
+ * identify the account whose infrastructure gets used. Everything else that can
+ * go wrong is on the server's side of the line, where the user can't fix it and
+ * shouldn't be asked to.
+ */
+async function managedChecks(config: LaranjaConfig): Promise<CheckResult[]> {
+  const checks: CheckResult[] = [];
+
+  checks.push(
+    resolveApiKey()
+      ? { status: "ok", label: "API key found" }
+      : {
+          status: "fail",
+          label: "no API key",
+          fix: "Run `laranja init`, or set LARANJA_API_KEY.",
+        },
+  );
+  checks.push(
+    config.projectId
+      ? { status: "ok", label: `project linked (${config.projectId})` }
+      : {
+          status: "fail",
+          label: "projectId not set",
+          fix: 'Add "projectId" from your dashboard to laranja.config.ts, or run `laranja init`.',
+        },
+  );
+  checks.push({
+    status: "ok",
+    label: "cloud account managed by laranja (nothing to configure)",
+  });
 
   return checks;
 }

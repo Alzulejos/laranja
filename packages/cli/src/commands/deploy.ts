@@ -9,6 +9,7 @@ import {
   postDeploymentResources,
   resolveApiKey,
   resolveDeclaredEnv,
+  usesAzureExecutor,
 } from "@alzulejos/laranja-core";
 import { buildRemoteAssembly } from "../pipeline.js";
 import { deployAzure } from "./deploy-azure.js";
@@ -47,7 +48,7 @@ export async function deploy(
 
   // Dispatch on provider BEFORE anything AWS-specific - account resolution,
   // bootstrap and the CDK toolkit below are all AWS-only concepts.
-  if (config.provider === "azure") {
+  if (usesAzureExecutor(config.provider)) {
     return deployAzure(projectDir, opts);
   }
 

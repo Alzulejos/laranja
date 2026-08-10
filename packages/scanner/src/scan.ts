@@ -7,6 +7,7 @@ import {
   ENV_NAME_PATTERN,
   intervalToSchedule,
   isValidEnvName,
+  resolveDeployTarget,
   type CloudProvider,
   type ComputeConfig,
   type CorsConfig,
@@ -198,7 +199,9 @@ export function scan({ projectDir, config }: ScanInput): InfraIR {
   }
 
   const stage = config.stage ?? "dev";
-  const provider = config.provider ?? "aws";
+  // Managed hosting ("laranja") resolves to the cloud it actually runs on, so the
+  // IR only ever names a real provider and the back-halves stay unaware of it.
+  const { provider } = resolveDeployTarget(config.provider);
   const monitoring = config.monitoring ?? true;
   assertProviderQueueSupport(provider, queues);
 

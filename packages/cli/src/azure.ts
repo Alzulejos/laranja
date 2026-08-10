@@ -19,12 +19,31 @@
 import path from "node:path";
 import { createWriteStream, mkdirSync, readFileSync } from "node:fs";
 import archiver from "archiver";
-import { DefaultAzureCredential } from "@azure/identity";
+import { DefaultAzureCredential, type TokenCredential } from "@azure/identity";
 import { DeploymentsClient } from "@azure/arm-resourcesdeployments";
 
+/**
+ * The credential every call below authenticates with.
+ *
+ * Two modes share this one seam. BYO-cloud resolves the user's own login (env
+ * vars, managed identity, then `az login`); managed hosting installs a
+ * server-backed credential instead — see `useAzureCredential`. Everything
+ * downstream takes a `TokenCredential`, so nothing else has to care which.
+ */
+let installed: TokenCredential | undefined;
+
+/**
+ * Deploy through a supplied credential rather than the local login. Called once
+ * at the start of a managed command; the CLI is one command per process, so a
+ * module-level override is the whole lifetime of that choice.
+ */
+export function useAzureCredential(credential: TokenCredential): void {
+  installed = credential;
+}
+
 /** Credential chain: env vars, managed identity, then `az login`. */
-export function azureCredential(): DefaultAzureCredential {
-  return new DefaultAzureCredential();
+export function azureCredential(): TokenCredential {
+  return installed ?? new DefaultAzureCredential();
 }
 
 /**

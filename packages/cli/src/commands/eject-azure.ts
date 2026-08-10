@@ -32,6 +32,7 @@ import {
   azureWorkloads,
   type AzureWorkload,
   type InfraIR,
+  resolveDeployTarget,
 } from "@alzulejos/laranja-core";
 import { buildAzureEjectPackages } from "../pipeline.js";
 import { zipDir } from "../azure.js";
@@ -79,10 +80,20 @@ export async function ejectAzure(projectDir: string, opts: { force?: boolean; st
     throw new Error(`${path.relative(projectDir, ejectDir)}/ already exists. Re-run with --force to overwrite.`);
   }
 
-  const target = {
-    subscriptionId: config.azure!.subscriptionId,
-    resourceGroup: config.azure!.resourceGroup,
-  };
+  // Eject deliberately does NOT resolve a managed target: the point of ejecting
+  // is to walk away with something you own, so the generated script names YOUR
+  // subscription and group, never laranja's. Managed projects get placeholders
+  // to fill in — and no server-side provisioning is triggered by ejecting.
+  const managed = resolveDeployTarget(config.provider).managed;
+  const target = managed
+    ? {
+        subscriptionId: "<your-subscription-id>",
+        resourceGroup: "<your-resource-group>",
+      }
+    : {
+        subscriptionId: config.azure!.subscriptionId,
+        resourceGroup: config.azure!.resourceGroup,
+      };
   // The ARM template is the server's to produce (entitlement-gated). Scan for the
   // IR to send; the paid call happens before the local build so a 403 costs
   // nothing.

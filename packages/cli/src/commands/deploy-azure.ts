@@ -33,6 +33,7 @@ import {
   resourceId,
   zipDir,
 } from "../azure.js";
+import { resolveAzureTarget } from "../managed.js";
 import { reportSafely } from "../lifecycle.js";
 import { azureFunctionUrl, buildAzureResources, printAzureFunctions } from "../azure-summary.js";
 import { step, note } from "../diagnostics.js";
@@ -51,11 +52,10 @@ export async function deployAzure(
 
   step("load config");
   const config = await loadConfig(projectDir, { stage: opts.stage });
-  // loadConfig guarantees both for an azure project, so a miss here is a bug.
-  const target = {
-    subscriptionId: config.azure!.subscriptionId,
-    resourceGroup: config.azure!.resourceGroup,
-  };
+  // For a managed project this is also what provisions the resource group and
+  // installs the server-issued credential — so it happens before any build work,
+  // and a quota refusal costs the user nothing.
+  const target = await resolveAzureTarget(config);
   note({ project: config.name, stage: config.stage, ...target });
 
   ui.header(`deploy ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);

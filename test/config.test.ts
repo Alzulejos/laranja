@@ -46,7 +46,28 @@ describe("loadConfig", () => {
     const dir = makeProject({
       "laranja.config.ts": `export default { name: "api", provider: "gcp" };`,
     });
-    await expect(loadConfig(dir)).rejects.toThrow(/"aws" or "azure" today/);
+    await expect(loadConfig(dir)).rejects.toThrow(/"aws", "azure", or "laranja" today/);
+  });
+
+  test("accepts managed hosting with a projectId and no cloud block", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "laranja", projectId: "proj-1" };`,
+    });
+    await expect(loadConfig(dir)).resolves.toMatchObject({ provider: "laranja" });
+  });
+
+  test("rejects managed hosting without a projectId", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "laranja" };`,
+    });
+    await expect(loadConfig(dir)).rejects.toThrow(/requires "projectId"/);
+  });
+
+  test("rejects managed hosting carrying an azure block", async () => {
+    const dir = makeProject({
+      "laranja.config.ts": `export default { name: "api", provider: "laranja", projectId: "p", azure: { subscriptionId: "s", resourceGroup: "r" } };`,
+    });
+    await expect(loadConfig(dir)).rejects.toThrow(/ignores the `azure` block/);
   });
 
   test("accepts azure when subscription and resource group are set", async () => {

@@ -28,6 +28,7 @@ import { note } from "../diagnostics.js";
 import * as ui from "../ui.js";
 import type { LogsOptions } from "./logs.js";
 import { parseSince } from "./logs.js";
+import { resolveAzureTarget } from "../managed.js";
 
 const POLL_MS = 5000;
 
@@ -38,12 +39,8 @@ export async function logsAzure(projectDir: string, opts: LogsOptions = {}): Pro
   const config = await loadConfig(projectDir, { stage: opts.stage });
   note({ project: config.name, stage: config.stage });
 
-  ui.header(`logs ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${config.azure!.resourceGroup}`);
-
-  const target = {
-    subscriptionId: config.azure!.subscriptionId,
-    resourceGroup: config.azure!.resourceGroup,
-  };
+  const target = await resolveAzureTarget(config);
+  ui.header(`logs ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);
   const functionApp = azureFunctionAppName(config.name, config.stage);
   const workspace = azureLogWorkspaceName(config.name, config.stage);
 

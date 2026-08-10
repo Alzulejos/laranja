@@ -3,6 +3,42 @@ import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import type { CloudProvider, ComputeConfig, CorsConfig, Framework } from "./ir.js";
 
+/**
+ * What `provider` may be set to in laranja.config.ts.
+ *
+ * "laranja" is not a cloud — it's managed hosting that runs ON one. It stays out
+ * of `CloudProvider` so the IR, the scanner and the synth back-halves only ever
+ * see real clouds and need no notion of who owns the account.
+ */
+export type ConfiguredProvider = CloudProvider | "laranja";
+
+/** Where a configured provider actually deploys, and who owns the account. */
+export interface DeployTarget {
+  /** The real cloud — what goes in the IR and picks the synth back-half. */
+  provider: CloudProvider;
+  /** True when laranja owns the subscription and issues the credentials. */
+  managed: boolean;
+}
+
+/**
+ * Resolve a configured provider to a real cloud. Managed hosting runs on Azure
+ * today, so `provider: "laranja"` synthesizes exactly like `provider: "azure"` —
+ * the only difference is where the credentials and target come from.
+ */
+export function resolveDeployTarget(
+  provider: ConfiguredProvider | undefined,
+): DeployTarget {
+  if (provider === "laranja") return { provider: "azure", managed: true };
+  return { provider: provider ?? "aws", managed: false };
+}
+
+/** True when a config deploys through the Azure executor (own account or ours). */
+export function usesAzureExecutor(
+  provider: ConfiguredProvider | undefined,
+): boolean {
+  return resolveDeployTarget(provider).provider === "azure";
+}
+
 /** Queue-only tuning knobs (SQS + event-source). */
 export interface QueueTuning {
   /** FIFO content-based dedup (FIFO queues only). */
@@ -101,10 +137,15 @@ export interface LaranjaConfig {
    */
   projectId?: string;
   /**
-   * Target cloud. "aws" and "azure" both run Express and NestJS with HTTP, crons,
-   * queues and env; FIFO queues are AWS-only. Defaults to "aws".
+   * Where to deploy. "aws" and "azure" both run Express and NestJS with HTTP,
+   * crons, queues and env; FIFO queues are AWS-only. Defaults to "aws".
+   *
+   * "laranja" is managed hosting: no cloud account of your own, no `azure` block
+   * — laranja provisions the infrastructure in its own subscription and the
+   * deploy still runs from your machine. `laranja eject` is unaffected and still
+   * hands you a template you own.
    */
-  provider?: CloudProvider;
+  provider?: ConfiguredProvider;
   region?: string;
   /** AWS named profile to deploy with. */
   profile?: string;
@@ -250,10 +291,31 @@ export async function loadConfig(
   // Reject providers with no back-half up front, so a forward-compatible config
   // field never silently deploys to the wrong (or no) target. Each supported
   // provider gets its own arm as it lands.
-  if (cfg.provider && cfg.provider !== "aws" && cfg.provider !== "azure") {
+  if (
+    cfg.provider &&
+    cfg.provider !== "aws" &&
+    cfg.provider !== "azure" &&
+    cfg.provider !== "laranja"
+  ) {
     throw new Error(
-      `${CONFIG_FILENAME}: provider "${cfg.provider}" isn't supported yet — "aws" or "azure" today.`,
+      `${CONFIG_FILENAME}: provider "${cfg.provider}" isn't supported yet — "aws", "azure", or "laranja" today.`,
     );
+  }
+  // Managed hosting has no cloud account to point at: the subscription and group
+  // are laranja's and are resolved at deploy time. A stray `azure` block here is
+  // a sign the user expected their own subscription to be used, so say so rather
+  // than silently ignoring it.
+  if (cfg.provider === "laranja") {
+    if (!cfg.projectId) {
+      throw new Error(
+        `${CONFIG_FILENAME}: provider "laranja" requires "projectId" (from your dashboard) — it identifies which project's infrastructure to use.`,
+      );
+    }
+    if (cfg.azure) {
+      throw new Error(
+        `${CONFIG_FILENAME}: provider "laranja" is managed hosting and ignores the \`azure\` block — use provider "azure" to deploy into your own subscription.`,
+      );
+    }
   }
   if (cfg.provider === "azure") {
     // There's no discovery equivalent to STS get-caller-identity: the target

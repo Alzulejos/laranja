@@ -39,7 +39,16 @@ export async function planAzure(projectDir: string, opts: { stage?: string } = {
   ui.header(`plan ${config.name} ${ui.dim(config.stage)} ${ui.dim("→")} azure/${target.resourceGroup}`);
 
   step("server build (scan/diff)");
-  const { ir, template } = await buildAzurePlanTemplate(projectDir, { stage: opts.stage }, apiKey);
+  // Same silent stretch as deploy — scan, bundle, then the server round trip.
+  const build = ui.spinner("scanning and bundling");
+  let ir, template;
+  try {
+    ({ ir, template } = await buildAzurePlanTemplate(projectDir, { stage: opts.stage }, apiKey));
+    build.stop();
+  } catch (err) {
+    build.fail("build failed");
+    throw err;
+  }
 
   // Crons on Azure are app settings on the function app, not ARM resources, so
   // what-if below can't name them — list the app's functions from the IR first.

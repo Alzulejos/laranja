@@ -62,7 +62,17 @@ export async function deployAzure(
   ui.step("🔑", "subscription", target.subscriptionId);
 
   step("server build (scan/bundle/synth)");
-  const built = await buildAzureAssembly(projectDir, { stage: opts.stage }, apiKey);
+  // Scan + bundle + the server round trip is the longest silent stretch of a
+  // deploy; without a spinner it reads as a hang before the summary line lands.
+  const build = ui.spinner("scanning and bundling");
+  let built;
+  try {
+    built = await buildAzureAssembly(projectDir, { stage: opts.stage }, apiKey);
+    build.stop();
+  } catch (err) {
+    build.fail("build failed");
+    throw err;
+  }
   const { ir, template, assets, names, warnings, assetDirsById, deploymentId, projectId } = built;
   note({ deploymentId, functionApp: names.functionApp });
   const cronNote = ir.crons.length ? `, ${ir.crons.length} cron${ir.crons.length === 1 ? "" : "s"}` : "";

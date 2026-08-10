@@ -22,6 +22,7 @@ import {
   type ConfiguredProvider,
 } from "@alzulejos/laranja-core";
 import { useAzureCredential, type AzureTarget } from "./azure.js";
+import * as ui from "./ui.js";
 
 /** Re-request this long before expiry, so a slow deploy can't 401 mid-flight. */
 const REFRESH_SKEW_MS = 5 * 60 * 1000;
@@ -159,10 +160,20 @@ export async function resolveAzureTarget(
     );
   }
 
-  const { credential, target } = await openManagedSession(
-    config.projectId,
-    config.stage,
-  );
-  useAzureCredential(credential);
-  return target;
+  // The first call for a stage provisions a resource group and an identity server
+  // side and takes ~15s, so it gets a spinner — silence here reads as a hang, and
+  // it is the one step in a managed deploy with nothing local to report on.
+  const spin = ui.spinner("preparing your cloud environment…");
+  try {
+    const { credential, target } = await openManagedSession(
+      config.projectId,
+      config.stage,
+    );
+    useAzureCredential(credential);
+    spin.succeed(`environment ready ${ui.dim(`(${target.location})`)}`);
+    return target;
+  } catch (err) {
+    spin.fail("could not prepare your cloud environment");
+    throw err;
+  }
 }

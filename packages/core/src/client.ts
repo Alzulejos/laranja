@@ -71,10 +71,28 @@ export class ApiRequestError extends Error {
     message: string,
     readonly status: number,
     readonly upgradeUrl?: string,
+    /**
+     * For transport failures (`status === 0`), the error `fetch` actually threw.
+     * Without it every network fault reads as "is the server running?", which is
+     * wrong — and misleading — whenever the server is up and the connection died
+     * for some other reason (reset, hang-up, body rejected mid-upload).
+     */
+    readonly transportCause?: string,
   ) {
     super(message);
     this.name = "ApiRequestError";
   }
+}
+
+/** The most specific description of a thrown `fetch` failure we can get. */
+function describeTransportError(cause: unknown): string | undefined {
+  if (!(cause instanceof Error)) return undefined;
+  // undici nests the useful part: TypeError("fetch failed") → cause: Error(ECONNRESET).
+  const inner = (cause as { cause?: unknown }).cause;
+  const innerError = inner instanceof Error ? inner : undefined;
+  const code = (innerError as { code?: string } | undefined)?.code;
+  const message = innerError?.message ?? cause.message;
+  return code ? `${code}: ${message}` : message;
 }
 
 /** Base URL of the laranja dashboard web app. Override with `LARANJA_DASHBOARD_URL` for local dev. */
@@ -143,11 +161,17 @@ export function apiErrorMessage(prefix: string, err: ApiRequestError): string {
       `  Check your projects at ${DASHBOARD_URL} and update "projectId" in ${CONFIG_FILENAME}.`,
     ].join("\n");
   }
-  const hint =
-    err.status === 0
-      ? `is the server running at ${resolveApiUrl()}?`
-      : err.message;
-  return `${prefix} — ${hint}`;
+  if (err.status === 0) {
+    // Name what actually went wrong. "Is the server running?" is only a fair
+    // guess for a refused connection; a reset or hang-up means it IS running and
+    // sending the user to check it wastes their time.
+    const cause = err.transportCause;
+    const refused = !cause || cause.includes("ECONNREFUSED");
+    return refused
+      ? `${prefix} — is the server running at ${resolveApiUrl()}?`
+      : `${prefix} — the connection to ${resolveApiUrl()} failed: ${cause}`;
+  }
+  return `${prefix} — ${err.message}`;
 }
 
 interface RequestOptions {
@@ -159,32 +183,77 @@ interface RequestOptions {
   body?: unknown;
 }
 
+/**
+ * Send a request, retrying once if the connection died before the server could
+ * answer.
+ *
+ * A CLI command talks to the server, then spends tens of seconds bundling — work
+ * that blocks the event loop, so the pooled keep-alive socket can't be closed on
+ * our side while the server drops it at its own (5s) idle timeout. The next
+ * request grabs that dead socket and fails with ECONNRESET. Node's HTTP client
+ * already does this retry for idempotent requests, which is why a GET recovers
+ * silently and a POST does not.
+ *
+ * Retrying is safe here precisely because `fetch` THREW: no response was ever
+ * received, and a socket that was already closed carried no request to the
+ * server. A reset that happens mid-response surfaces as a body error instead,
+ * not here.
+ */
+async function fetchWithStaleSocketRetry(
+  url: string,
+  init: RequestInit,
+): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (cause) {
+    const detail = describeTransportError(cause) ?? "";
+    const stale =
+      detail.includes("ECONNRESET") ||
+      detail.includes("socket hang up") ||
+      detail.includes("UND_ERR_SOCKET");
+    if (!stale) throw cause;
+    if (process.env.LARANJA_DEBUG_HTTP) {
+      console.error(`[http] retrying after a dead connection (${detail})`);
+    }
+    return await fetch(url, init);
+  }
+}
+
 async function apiRequest<T>(
   method: "GET" | "POST" | "PATCH",
   endpoint: string,
   opts: RequestOptions,
 ): Promise<T> {
   const url = `${opts.baseUrl ?? resolveApiUrl()}${endpoint}`;
+  if (process.env.LARANJA_DEBUG_HTTP) {
+    const json = opts.body === undefined ? "" : JSON.stringify(opts.body);
+    console.error(`[http] ${method} ${url} body=${Buffer.byteLength(json)}B keys=${Object.keys(opts.body ?? {})}`);
+    if (process.env.LARANJA_DEBUG_HTTP === "2") console.error(`[http] ${json.slice(0, 1500)}`);
+  }
+
+  const init: RequestInit = {
+    method,
+    headers: {
+      "x-api-key": opts.apiKey,
+      "x-cli-version": CLI_VERSION,
+      ...(opts.projectId ? { "x-project-id": opts.projectId } : {}),
+      ...(opts.body !== undefined
+        ? { "Content-Type": "application/json" }
+        : {}),
+    },
+    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+  };
 
   let res: Response;
   try {
-    res = await fetch(url, {
-      method,
-      headers: {
-        "x-api-key": opts.apiKey,
-        "x-cli-version": CLI_VERSION,
-        ...(opts.projectId ? { "x-project-id": opts.projectId } : {}),
-        ...(opts.body !== undefined
-          ? { "Content-Type": "application/json" }
-          : {}),
-      },
-      body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
-    });
+    res = await fetchWithStaleSocketRetry(url, init);
   } catch (cause) {
     throw new ApiRequestError(
       "server_error",
       `Could not reach the laranja server at ${url}`,
       0,
+      undefined,
+      describeTransportError(cause),
     );
   }
 

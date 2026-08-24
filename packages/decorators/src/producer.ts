@@ -1,4 +1,13 @@
-import { queueUrlEnvName, PROVIDER_ENV_NAME } from "@alzulejos/laranja-core";
+import { randomUUID } from "node:crypto";
+import {
+  queueUrlEnvName,
+  PROVIDER_ENV_NAME,
+  LOCAL_PROVIDER,
+  LOCAL_QUEUE_URL_ENV,
+  localDelayedKey,
+  localQueueKey,
+  type LocalQueueMessage,
+} from "@alzulejos/laranja-core";
 
 /**
  * Per-message options for `getQueue(name).send()`.
@@ -54,13 +63,17 @@ let azureQueueService: QueueServiceClient | undefined;
  *   await getQueue("orders.fifo").send(order, { groupId: order.customerId }); // AWS FIFO
  */
 export function getQueue(name: string): LaranjaQueue {
-  const target = process.env[queueUrlEnvName(name)];
+  const provider = process.env[PROVIDER_ENV_NAME] ?? "aws";
+  // Locally the "target" is a Redis key we derive from the name, so `laranja dev`
+  // doesn't have to fabricate a URL per queue just to satisfy this lookup.
+  const target =
+    process.env[queueUrlEnvName(name)] ??
+    (provider === LOCAL_PROVIDER ? localQueueKey(name) : undefined);
   if (!target) {
     throw new Error(
       `getQueue("${name}"): no queue target in env. Is "${name}" a declared queue in this project?`,
     );
   }
-  const provider = process.env[PROVIDER_ENV_NAME] ?? "aws";
 
   return {
     url: target,
@@ -69,6 +82,7 @@ export function getQueue(name: string): LaranjaQueue {
       // Queue message are both opaque text), so the consumer sees the same string
       // regardless of where it ran — the one contract the shim relies on.
       const body = typeof payload === "string" ? payload : JSON.stringify(payload);
+      if (provider === LOCAL_PROVIDER) return sendLocal(name, body, options);
       return provider === "azure"
         ? sendAzure(name, target, body, options)
         : sendSqs(name, target, body, options);
@@ -140,4 +154,60 @@ async function sendAzure(
     visibilityTimeout: options.delaySeconds,
   });
   return { messageId: out.messageId };
+}
+
+/**
+ * Local (`laranja dev`): enqueue into the Redis backing the project's queues.
+ *
+ * `delaySeconds` becomes a score in the delayed sorted set rather than a sleep,
+ * so a delayed message survives the producer exiting — the same guarantee SQS
+ * gives, and the reason this isn't an in-process queue.
+ */
+async function sendLocal(
+  name: string,
+  body: string,
+  options: SendOptions,
+): Promise<{ messageId?: string }> {
+  const url = process.env[LOCAL_QUEUE_URL_ENV];
+  if (!url) {
+    throw new Error(
+      `getQueue("${name}").send: ${LOCAL_QUEUE_URL_ENV} is not set — run \`laranja dev\` and load .laranja/dev.env.`,
+    );
+  }
+  const client = await localClient(url);
+  const message: LocalQueueMessage = {
+    id: randomUUID(),
+    body,
+    receiveCount: 0,
+    enqueuedAt: Date.now(),
+  };
+  const payload = JSON.stringify(message);
+
+  if (options.delaySeconds && options.delaySeconds > 0) {
+    await client.zadd(localDelayedKey(name), Date.now() + options.delaySeconds * 1000, payload);
+  } else {
+    // LPUSH + the poller's RPOP gives FIFO order for a single consumer. Real SQS
+    // standard queues don't promise ordering, so nothing may depend on it — but
+    // getting it for free makes local runs reproducible.
+    await client.lpush(localQueueKey(name), payload);
+  }
+  return { messageId: message.id };
+}
+
+type RedisClient = import("ioredis").Redis;
+let redisClient: RedisClient | undefined;
+
+/** Lazily open one Redis connection, reused for every subsequent send. */
+async function localClient(url: string): Promise<RedisClient> {
+  if (redisClient) return redisClient;
+  let Redis: typeof import("ioredis").Redis;
+  try {
+    ({ Redis } = await import("ioredis"));
+  } catch {
+    throw new Error(
+      "Local queues need `ioredis`. Install it in your project: npm i -D ioredis",
+    );
+  }
+  redisClient = new Redis(url, { maxRetriesPerRequest: null });
+  return redisClient;
 }

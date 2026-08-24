@@ -65,17 +65,35 @@ export interface RegisteredHandler {
   className: string;
   method: string;
   options: CronOptions | QueueOptions;
+  /**
+   * The callable itself, for the function form (`cron(...)` / `queue(...)`).
+   *
+   * Deployed code never needs this — the scanner finds handlers statically and
+   * codegen writes entry shims that import them directly. It exists for the
+   * LOCAL runtime, which has no codegen step: the user runs their own process,
+   * so the only way to reach a handler is the reference the registration already
+   * had in hand.
+   */
+  handler?: JobHandler;
+  /**
+   * The class owning a decorated method (`@Cron` / `@Queue`), for the same
+   * reason. Kept as the constructor rather than an instance because a Nest
+   * provider must be resolved from the app's DI container, not constructed here.
+   */
+  ctor?: new (...args: never[]) => object;
 }
 
 /** Module-level registry, populated when decorated classes are imported. */
 export const handlerRegistry: RegisteredHandler[] = [];
 
 function register(kind: HandlerKind, target: object, method: string | symbol, options: CronOptions | QueueOptions): void {
+  const ctor = (target as { constructor: new (...args: never[]) => object }).constructor;
   handlerRegistry.push({
     kind,
-    className: (target as { constructor: { name: string } }).constructor.name,
+    className: ctor.name,
     method: String(method),
     options,
+    ctor,
   });
 }
 
@@ -84,7 +102,7 @@ export type JobHandler = (...args: any[]) => unknown | Promise<unknown>;
 
 function registerFunction(kind: HandlerKind, handler: JobHandler, options: CronOptions | QueueOptions): void {
   const name = handler.name || "(anonymous)";
-  handlerRegistry.push({ kind, className: name, method: name, options });
+  handlerRegistry.push({ kind, className: name, method: name, options, handler });
 }
 
 /**

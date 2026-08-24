@@ -20,3 +20,4 @@ export type { NestContextLike, NestContextFactory, DispatchEntry } from "./nest-
 // generates code that imports the factories above).
 export { generateEntries } from "./codegen.js";
 export type { GeneratedEntry, GenerateEntriesOptions } from "./codegen.js";
+export * from "./local.js";

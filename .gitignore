@@ -16,3 +16,4 @@ examples/*/laranja.types.ts
 
 .npmrc
 deploy.sh
+specs/

@@ -2,6 +2,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { existsSync } from "node:fs";
 import type { CloudProvider, ComputeConfig, CorsConfig, Framework } from "./ir.js";
+import type { ServicesConfig } from "./services.js";
 
 /**
  * What `provider` may be set to in laranja.config.ts.
@@ -198,6 +199,18 @@ export interface LaranjaConfig {
    * error at scan time so a typo never silently no-ops.
    */
   resources?: Record<string, ResourceConfig>;
+  /**
+   * Backing services the app needs — a database, a cache — keyed by a name of
+   * your choosing:
+   *
+   *   services: { db: postgres(), cache: redis() }
+   *
+   * `laranja dev` provisions these locally and publishes each one's connection
+   * URL to an env var (see `resolveServiceEnvName`). They are declarations of
+   * need, not of place: the same block is what managed cloud provisioning will
+   * read later, so this is not dev-only configuration.
+   */
+  services?: ServicesConfig;
 }
 
 export const CONFIG_FILENAME = "laranja.config.ts";

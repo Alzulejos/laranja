@@ -16,9 +16,11 @@
     "access": "public"
   },
   "dependencies": {
-    "@codegenie/serverless-express": "^4.1.6",
+    "@alzulejos/laranja-core": "0.2.4",
+    "@alzulejos/laranja-decorators": "0.2.4",
     "@azure/functions": "^4.16.2",
-    "@alzulejos/laranja-core": "0.2.4"
+    "@codegenie/serverless-express": "^4.1.6",
+    "ioredis": "^5.4.1"
   },
   "devDependencies": {
     "@alzulejos/laranja-scanner": "0.2.4",

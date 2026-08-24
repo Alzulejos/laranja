@@ -8,6 +8,7 @@ import { plan } from "./commands/plan.js";
 import { destroy } from "./commands/destroy.js";
 import { eject } from "./commands/eject.js";
 import { logs } from "./commands/logs.js";
+import { dev, type DevAction } from "./commands/dev.js";
 import { beginRun, buildFailureReport, writeFailureReport, sendFailureReport } from "./diagnostics.js";
 import * as ui from "./ui.js";
 
@@ -16,24 +17,32 @@ const HELP = `laranja — code-first deploy for Node apps
 Usage:
   laranja <command> [project-dir]
 
-Commands:
-  init       Scaffold a laranja.config.ts (prompts for + stores your API key)
-  logout     Remove the stored API key (~/.laranja/auth.json)
-  plan       Preview what a deploy would change (created/changed/unchanged)
-  deploy     Deploy into your AWS account (uses local credentials)
-  destroy    Tear down the deployed stack
-  logs       Tail logs for a deployed function (CloudWatch on AWS, App Insights on Azure)
-  eject      Generate an owned, editable CDK project (paid)
+Local development:
+  dev            Start the services your app declares (Postgres, cache, queues)
+  dev status     Reprint the connection table without starting anything
+  dev down       Stop the services, keeping the data
+  dev reset      Stop the services and DELETE the local data
+
+Deploy:
+  init           Scaffold a laranja.config.ts (prompts for + stores your API key)
+  plan           Preview what a deploy would change (created/changed/unchanged)
+  deploy         Deploy into your own cloud account, using your local credentials
+  destroy        Tear down the deployed stack
+  logs           Tail logs for a deployed function
+  eject          Generate an owned, editable infrastructure project (paid)
+
+Account:
+  logout         Remove the stored API key (~/.laranja/auth.json)
 
 Flags:
-  --stage, -s <name>  Deployment stage to target, e.g. dev/staging/prod
-                      (overrides config; deploy/plan/destroy/logs/eject)
+  --stage, -s <name>  Target a stage, e.g. dev/staging/prod; overrides the config
+                      (deploy, plan, destroy, logs, eject)
   --verbose, -v       Show full CDK/CloudFormation output (deploy)
-  --strict            deploy: fail if any env("...") declared in code has no
-                      value set locally/in CI (default: deploy + warn)
-  --all               logs: tail every function (multiplexed)
-  --no-follow         logs: print recent history and exit (no live tail)
-  --since <dur>       logs: history look-back, e.g. 30s, 15m, 1h, 2d (default 1h)
+  --strict            Fail if an env("...") declared in code has no value set
+                      locally or in CI; default is to deploy and warn (deploy)
+  --all               Tail every function at once (logs)
+  --no-follow         Print recent history and exit, no live tail (logs)
+  --since <dur>       History look-back: 30s, 15m, 1h, 2d; default 1h (logs)
 
 project-dir defaults to the current directory.
 `;
@@ -111,6 +120,19 @@ async function main(): Promise<void> {
     case "eject":
       await eject(projectDir, { force: rest.includes("--force"), stage });
       break;
+    case "dev": {
+      // Positionals: a known action word is the action, anything else the dir —
+      // so `dev`, `dev status`, `dev ./app` and `dev status ./app` all work.
+      const actions: DevAction[] = ["up", "status", "down", "reset"];
+      let dir = ".";
+      let action: DevAction = "up";
+      for (const p of positionals) {
+        if ((actions as string[]).includes(p)) action = p as DevAction;
+        else dir = p;
+      }
+      await dev(path.resolve(dir), action, { stage });
+      break;
+    }
     case "help":
     case "--help":
     case "-h":
